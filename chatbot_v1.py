@@ -44,6 +44,10 @@ def format_response(response):
         formatted_response.append("\n".join(textwrap.wrap(chunk, 100, break_long_words=False)))
     return "\n".join(formatted_response)
 
+@app.route('/', methods=['GET'])
+def home():
+    return jsonify({"message": "Welcome to the chatbot API. Use the /chat endpoint for POST requests."})
+
 @app.route('/chat', methods=['POST'])
 def chat():
     # Get user input from POST request
