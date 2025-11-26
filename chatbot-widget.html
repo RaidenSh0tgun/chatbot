@@ -99,128 +99,70 @@
     <script>
         // --- JAVASCRIPT LOGIC ---
         const API_ENDPOINT = 'https://api.drtongc.space/chat';
-        
-        // 1. Variable to store the entire conversation history (critical for RAG context)
+
+        // 1. Generate or load session_id (NEW)
+        let session_id = localStorage.getItem("spaa_session_id");
+        if (!session_id) {
+            session_id = crypto.randomUUID();
+            localStorage.setItem("spaa_session_id", session_id);
+        }
+
+        // 2. Variable to store the entire conversation history (client-side)
         let conversationContext = ""; 
-        
+
         document.getElementById('send-btn').addEventListener('click', sendMessage);
         document.getElementById('user-input').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
+            if (e.key === 'Enter') sendMessage();
         });
 
-                async function sendMessage() {
+        async function sendMessage() {
             const userInput = document.getElementById('user-input');
             const question = userInput.value.trim();
             if (!question) return;
-        
-            // 1. Display user message and set thinking state
+
             appendMessage(question, 'user');
-            userInput.value = ''; 
-        
-            const thinkingMsg = appendMessage('Friday is typing...', 'bot-thinking'); 
+            userInput.value = '';
+
+            const thinkingMsg = appendMessage('Friday is typing...', 'bot-thinking');
+
             userInput.disabled = true;
             document.getElementById('send-btn').disabled = true;
-        
+
             try {
-                // 2. Make API call to your Cloudflare Tunnel endpoint
                 const response = await fetch(API_ENDPOINT, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        'question': question,
-                        'context': conversationContext
-                    }) 
+                    body: JSON.stringify({
+                        question: question,
+                        context: conversationContext,
+                        session_id: session_id        // 🔥 add session_id here
+                    })
                 });
-        
-                // Check for server-side errors (like 400, 500, or 502)
-                if (!response.ok) {
-                    // Check specifically for 502 Bad Gateway (very common when Python is off)
-                    if (response.status === 502) {
-                        // Throw a custom error that the catch block can identify
-                        throw new Error('SERVER_UNREACHABLE_502'); 
-                    }
-                    throw new Error(`Server error: ${response.status}`);
-                }
-        
+
+                if (!response.ok) throw new Error(`Server error: ${response.status}`);
+
                 const data = await response.json();
-                const answer = data.answer; 
-                
-                // 3. Success: Display answer and update context
+                const answer = data.answer;
+
                 thinkingMsg.textContent = answer;
                 thinkingMsg.classList.remove('bot-thinking');
-                thinkingMsg.classList.add('bot'); 
+                thinkingMsg.classList.add('bot');
+
+                // Update context for next request
                 conversationContext += `\nUser: ${question}\nAI: ${answer}`;
-        
+
             } catch (error) {
-                console.error('Chatbot API Error:', error);
-                
-                let displayMessage = 'Sorry, the server encountered an unexpected error.';
-        
-                // --- NEW LOGIC TO CATCH SERVICE UNAVAILABILITY ---
-                // 1. If the fetch fails completely (Python server is off/network issue).
-                // 2. If the server returned our custom 502 error.
-                if (error.message.includes('Failed to fetch') || error.message === 'SERVER_UNREACHABLE_502') {
-                     displayMessage = 'Service is not available. Please try again later.';
-                }
-                // If you see a CORS error, display a debugging message
-                else if (error.message.includes('CORS policy')) {
-                    displayMessage = 'Service is blocked due to CORS policy. Check API logs.';
-                }
-                
-                thinkingMsg.textContent = displayMessage;
-                thinkingMsg.classList.remove('bot-thinking');
-                thinkingMsg.classList.add('error'); 
-        
+                thinkingMsg.textContent = "Error: Unable to reach server";
+                thinkingMsg.classList.add('error');
+
             } finally {
-                // Re-enable input
                 userInput.disabled = false;
                 document.getElementById('send-btn').disabled = false;
                 userInput.focus();
             }
         }
-        
-        function appendMessage(text, sender) {
-            const messagesDiv = document.getElementById('chat-messages');
-            const messageElement = document.createElement('div');
-            
-            // The sender could be 'user', 'bot-thinking', or 'bot'
-            messageElement.classList.add('message', sender); 
-            
-            // If the message is the initial thinking message, it should just be placed, 
-            // but if it's the final answer, you need to swap the class (done above in sendMessage)
-            if (sender === 'bot') {
-                 messageElement.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-            } else {
-                 messageElement.textContent = text;
-            }
-        
-            messagesDiv.appendChild(messageElement);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight; 
-            return messageElement;
-        }
 
-        function appendMessage(text, sender) {
-            const messagesDiv = document.getElementById('chat-messages');
-            const messageElement = document.createElement('div');
-            messageElement.classList.add('message', sender);
-            
-            // Simple method to display initial bold text (for welcome message)
-            if (sender === 'bot') {
-                 messageElement.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-            } else {
-                 messageElement.textContent = text;
-            }
-
-            messagesDiv.appendChild(messageElement);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll to bottom
-            return messageElement;
-        }
     </script>
 </body>
 </html>
-
-
-
 
