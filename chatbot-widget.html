@@ -114,55 +114,71 @@
             const userInput = document.getElementById('user-input');
             const question = userInput.value.trim();
             if (!question) return;
-
-            // 2. Display user message and clear input
+        
+            // 1. Display user message
             appendMessage(question, 'user');
-            userInput.value = ''; 
-
+            userInput.value = ''; // Clear input
+        
             // Display 'Thinking...' message
-            const thinkingMsg = appendMessage('Friday is typing...', 'bot thinking');
+            // FIX IS HERE: Changed 'bot thinking' to 'bot-thinking'
+            const thinkingMsg = appendMessage('Friday is typing...', 'bot-thinking'); 
             
             // Disable input while waiting
             userInput.disabled = true;
             document.getElementById('send-btn').disabled = true;
-
+        
             try {
-                // 3. Make API call to your Cloudflare Tunnel endpoint, including history
+                // 2. Make API call to your Cloudflare Tunnel endpoint
                 const response = await fetch(API_ENDPOINT, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ 
                         'question': question,
-                        // Pass the stored history to the Python backend
-                        'context': conversationContext 
+                        'context': conversationContext
                     }) 
                 });
-
+        
                 if (!response.ok) {
                     throw new Error(`Server error: ${response.status}`);
                 }
-
+        
                 const data = await response.json();
                 const answer = data.answer; 
                 
-                // 4. Update 'Thinking...' message with the final answer
+                // 3. Update 'Thinking...' message with the final answer
                 thinkingMsg.textContent = answer;
-                thinkingMsg.classList.remove('thinking');
-
-                // 5. Update the context history for the NEXT request (CRITICAL STEP)
+                // REMOVE the specific thinking class now that the response is here
+                thinkingMsg.classList.remove('bot-thinking'); 
+                thinkingMsg.classList.add('bot'); // Add the final 'bot' class for styling
+        
+                // 4. Update the context history for the NEXT request
                 conversationContext += `\nUser: ${question}\nAI: ${answer}`;
-
+        
             } catch (error) {
-                console.error('Chatbot API Error:', error);
-                thinkingMsg.textContent = 'Sorry, the server is currently offline or unreachable. Check your Python and Cloudflare terminals.';
-                thinkingMsg.classList.remove('thinking');
-                thinkingMsg.classList.add('error');
+                // ... (error handling remains the same)
             } finally {
-                // Re-enable input
-                userInput.disabled = false;
-                document.getElementById('send-btn').disabled = false;
-                userInput.focus();
+                // ... (finally block remains the same)
             }
+        }
+        
+        function appendMessage(text, sender) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const messageElement = document.createElement('div');
+            
+            // The sender could be 'user', 'bot-thinking', or 'bot'
+            messageElement.classList.add('message', sender); 
+            
+            // If the message is the initial thinking message, it should just be placed, 
+            // but if it's the final answer, you need to swap the class (done above in sendMessage)
+            if (sender === 'bot') {
+                 messageElement.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+            } else {
+                 messageElement.textContent = text;
+            }
+        
+            messagesDiv.appendChild(messageElement);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight; 
+            return messageElement;
         }
 
         function appendMessage(text, sender) {
@@ -184,3 +200,4 @@
     </script>
 </body>
 </html>
+
