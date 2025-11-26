@@ -180,9 +180,26 @@
             messagesDiv.scrollTop = messagesDiv.scrollHeight; 
             return messageElement;
         }
+        function appendMessage(text, sender) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', sender);
+            
+            // Simple method to display initial bold text (for welcome message)
+            if (sender === 'bot') {
+                 messageElement.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+            } else {
+                 messageElement.textContent = text;
+            }
+
+            messagesDiv.appendChild(messageElement);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll to bottom
+            return messageElement;
+        }
 
     </script>
 </body>
 </html>
+
 
 
