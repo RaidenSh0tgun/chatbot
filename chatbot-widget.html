@@ -110,20 +110,16 @@
             }
         });
 
-        async function sendMessage() {
+                async function sendMessage() {
             const userInput = document.getElementById('user-input');
             const question = userInput.value.trim();
             if (!question) return;
         
-            // 1. Display user message
+            // 1. Display user message and set thinking state
             appendMessage(question, 'user');
-            userInput.value = ''; // Clear input
+            userInput.value = ''; 
         
-            // Display 'Thinking...' message
-            // FIX IS HERE: Changed 'bot thinking' to 'bot-thinking'
             const thinkingMsg = appendMessage('Friday is typing...', 'bot-thinking'); 
-            
-            // Disable input while waiting
             userInput.disabled = true;
             document.getElementById('send-btn').disabled = true;
         
@@ -138,36 +134,50 @@
                     }) 
                 });
         
-                // This block handles errors where the SERVER responded, e.g., 404, 500, etc.
+                // Check for server-side errors (like 400, 500, or 502)
                 if (!response.ok) {
-                    // Check for 502 Bad Gateway (the typical error when Python is OFF)
+                    // Check specifically for 502 Bad Gateway (very common when Python is off)
                     if (response.status === 502) {
-                        // Throw an error that the catch block can specifically identify
-                        throw new Error('SERVER_OFFLINE'); 
+                        // Throw a custom error that the catch block can identify
+                        throw new Error('SERVER_UNREACHABLE_502'); 
                     }
-                    // For other errors (like 500 when Python is running but crashed), use the default message
                     throw new Error(`Server error: ${response.status}`);
                 }
         
                 const data = await response.json();
-                // ... (lines to display answer and update context)
+                const answer = data.answer; 
+                
+                // 3. Success: Display answer and update context
+                thinkingMsg.textContent = answer;
+                thinkingMsg.classList.remove('bot-thinking');
+                thinkingMsg.classList.add('bot'); 
+                conversationContext += `\nUser: ${question}\nAI: ${answer}`;
         
             } catch (error) {
                 console.error('Chatbot API Error:', error);
                 
-                let displayMessage = 'Sorry, the server is currently offline or unreachable. Please check your Python terminal.';
+                let displayMessage = 'Sorry, the server encountered an unexpected error.';
         
-                // NEW LOGIC: Check the error type for a clean "service is not available" message
-                if (error.message === 'SERVER_OFFLINE' || error.message.includes('Failed to fetch')) {
+                // --- NEW LOGIC TO CATCH SERVICE UNAVAILABILITY ---
+                // 1. If the fetch fails completely (Python server is off/network issue).
+                // 2. If the server returned our custom 502 error.
+                if (error.message.includes('Failed to fetch') || error.message === 'SERVER_UNREACHABLE_502') {
                      displayMessage = 'Service is not available. Please try again later.';
                 }
-        
+                // If you see a CORS error, display a debugging message
+                else if (error.message.includes('CORS policy')) {
+                    displayMessage = 'Service is blocked due to CORS policy. Check API logs.';
+                }
+                
                 thinkingMsg.textContent = displayMessage;
                 thinkingMsg.classList.remove('bot-thinking');
-                thinkingMsg.classList.add('error'); // Display error message clearly
+                thinkingMsg.classList.add('error'); 
         
             } finally {
-                // ... (lines to re-enable input)
+                // Re-enable input
+                userInput.disabled = false;
+                document.getElementById('send-btn').disabled = false;
+                userInput.focus();
             }
         }
         
@@ -210,6 +220,7 @@
     </script>
 </body>
 </html>
+
 
 
 
