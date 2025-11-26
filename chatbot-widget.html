@@ -161,8 +161,28 @@
                 userInput.focus();
             }
         }
+        function appendMessage(text, sender) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const messageElement = document.createElement('div');
+            
+            // The sender could be 'user', 'bot-thinking', or 'bot'
+            messageElement.classList.add('message', sender); 
+            
+            // If the message is the initial thinking message, it should just be placed, 
+            // but if it's the final answer, you need to swap the class (done above in sendMessage)
+            if (sender === 'bot') {
+                 messageElement.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+            } else {
+                 messageElement.textContent = text;
+            }
+        
+            messagesDiv.appendChild(messageElement);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight; 
+            return messageElement;
+        }
 
     </script>
 </body>
 </html>
+
 
