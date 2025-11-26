@@ -150,21 +150,24 @@
                 }
         
                 const data = await response.json();
-                const answer = data.answer; 
-                
-                // 3. Update 'Thinking...' message with the final answer
-                thinkingMsg.textContent = answer;
-                // REMOVE the specific thinking class now that the response is here
-                thinkingMsg.classList.remove('bot-thinking'); 
-                thinkingMsg.classList.add('bot'); // Add the final 'bot' class for styling
-        
-                // 4. Update the context history for the NEXT request
-                conversationContext += `\nUser: ${question}\nAI: ${answer}`;
+                // ... (lines to display answer and update context)
         
             } catch (error) {
-                // ... (error handling remains the same)
+                console.error('Chatbot API Error:', error);
+                
+                let displayMessage = 'Sorry, the server is currently offline or unreachable. Please check your Python terminal.';
+        
+                // NEW LOGIC: Check the error type for a clean "service is not available" message
+                if (error.message === 'SERVER_OFFLINE' || error.message.includes('Failed to fetch')) {
+                     displayMessage = 'Service is not available. Please try again later.';
+                }
+        
+                thinkingMsg.textContent = displayMessage;
+                thinkingMsg.classList.remove('bot-thinking');
+                thinkingMsg.classList.add('error'); // Display error message clearly
+        
             } finally {
-                // ... (finally block remains the same)
+                // ... (lines to re-enable input)
             }
         }
         
@@ -207,5 +210,6 @@
     </script>
 </body>
 </html>
+
 
 
