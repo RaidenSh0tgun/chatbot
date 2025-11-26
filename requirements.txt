@@ -1,3 +1,10 @@
-flask
-groq
-textwrap3
+langchain
+langchain-ollama
+langchain-chroma
+langchain-community
+pypdf
+pandas
+fastapi
+pydantic
+cloudfared
+flask-cors
