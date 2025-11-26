@@ -3,8 +3,35 @@ from flask_cors import CORS # NEW IMPORT
 from langchain_ollama.llms import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 from vector import retriever 
+import csv
+import os
+from datetime import datetime
+
+# Create folder if it doesn't exist
+os.makedirs("conversation", exist_ok=True)
+
+def save_to_csv(session_id, sender, message):
+    filename = f"conversation/{session_id}.csv"
+    file_exists = os.path.isfile(filename)
+
+    with open(filename, "a", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+
+        # Write header only once
+        if not file_exists:
+            writer.writerow(["timestamp", "session_id", "sender", "message"])
+
+        writer.writerow([
+            datetime.now().isoformat(),
+            session_id,
+            sender,
+            message
+        ])
 
 app = Flask(__name__)
+
+# NEW - store memory for each session
+conversation_memory = {}  # session_id → list of messages
 
 # --- START OF CORS CONFIGURATION ---
 # This allows browsers from any origin (your website) to send requests to the /chat endpoint.
@@ -36,27 +63,49 @@ chain = prompt | model
 
 @app.route('/chat', methods=['POST'])
 def chat_endpoint():
-    # 1. Get the question from the incoming JSON request
-    try:
-        data = request.get_json()
-        question = data.get("question")
-        context = data.get("context", "") 
-    except:
-        # 400 Bad Request error
-        return jsonify({"error": "Invalid JSON or missing 'question'"}), 400
+
+    data = request.get_json() or {}
+
+    question = data.get("question")
+    session_id = data.get("session_id")  # NEW
 
     if not question:
-        # 400 Bad Request error
-        return jsonify({"error": "Missing question parameter"}), 400
+        return jsonify({"error": "Missing 'question'"}), 400
+    if not session_id:
+        return jsonify({"error": "Missing 'session_id'"}), 400
+
+    # 🧠 Initialize memory for new session
+    if session_id not in conversation_memory:
+        conversation_memory[session_id] = []
+
+    # Save user message to CSV
+    save_to_csv(session_id, "User", question)
     
-    # 2. RAG Logic (as in your original main.py)
-    info = retriever.invoke(question) 
-    
-    # 3. Invoke the LangChain
-    result = chain.invoke({"context": context, "info": info, "question": question})
-    
-    # 4. Return the result as JSON
-    return jsonify({"answer": result})
+    # 🧠 Convert memory list into a history string
+    context = "\n".join(conversation_memory[session_id])
+
+    # 🔍 RAG retrieval
+    info = retriever.invoke(question)
+
+    # 🤖 LLM call
+    result = chain.invoke({
+        "context": context,
+        "info": info,
+        "question": question
+    })
+
+    # Save assistant reply
+    save_to_csv(session_id, "Assistant", result)
+
+    # 🧠 Save memory
+    conversation_memory[session_id].append(f"User: {question}")
+    conversation_memory[session_id].append(f"Assistant: {result}")
+
+    # Return response
+    return jsonify({
+        "answer": result,
+        "session_id": session_id  # returned for frontend continuity
+    })
 
 if __name__ == '__main__':
     # Run the server on a specific local port (e.g., 5000)
