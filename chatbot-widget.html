@@ -138,7 +138,14 @@
                     }) 
                 });
         
+                // This block handles errors where the SERVER responded, e.g., 404, 500, etc.
                 if (!response.ok) {
+                    // Check for 502 Bad Gateway (the typical error when Python is OFF)
+                    if (response.status === 502) {
+                        // Throw an error that the catch block can specifically identify
+                        throw new Error('SERVER_OFFLINE'); 
+                    }
+                    // For other errors (like 500 when Python is running but crashed), use the default message
                     throw new Error(`Server error: ${response.status}`);
                 }
         
@@ -200,4 +207,5 @@
     </script>
 </body>
 </html>
+
 
