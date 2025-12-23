@@ -1,10 +1,19 @@
-langchain
+# --- Core AI & RAG ---
+langchain-core
 langchain-ollama
 langchain-chroma
+langchain-text-splitters
 langchain-community
-pypdf
+
+# --- Data Processing ---
 pandas
-fastapi
-pydantic
-cloudfared
+tqdm
+pypdf
+
+# --- Web & API ---
+flask
 flask-cors
+pydantic
+
+# --- Deployment & Misc ---
+cloudflared

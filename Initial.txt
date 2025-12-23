@@ -1,9 +1,18 @@
+*run bot
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ./venv/Scripts/activate
-
 python .\main.py
-python .\api.py
-uvicorn api:app --host 0.0.0.0 --port 8000
-gcloud init
-gcloud services enable run.googleapis.com artifactregistry.googleapis.com
-gcloud run deploy spaa-chatbot --source . --region us-central1 --allow-unauthenticated  
+
+*connect to website
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+./venv/Scripts/activate
+cloudflared tunnel run spaa-chatbot
+
+*refresh database
+**delete folder 'chrome_db' first
+python .\Review.py
+python .\clean.py
+python .\vector.py
+
+*test Q&A
+python .\test.py
