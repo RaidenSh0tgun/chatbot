@@ -3,145 +3,130 @@
 <head>
     <title>SPAA Friday Chatbot</title>
     <style>
-        /* --- CSS STYLES --- */
+        /* --- CSS STYLES FOR THE CHAT WIDGET --- */
         body {
             margin: 0;
             padding: 0;
-            background-color: #fff;
+            background-color: #fff; /* Ensure white background for the iframe */
         }
         #chatbot-container {
             display: flex;
             flex-direction: column;
-            height: 100vh;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            height: 100vh; /* Use 100% of the iframe height */
+            border: none;
+            font-family: Arial, sans-serif;
             box-sizing: border-box;
         }
         #chat-messages {
             flex-grow: 1;
             overflow-y: auto;
-            padding: 15px;
-            background-color: #f4f7f6;
+            padding: 10px;
+            background-color: #f0f4f9; /* Light blue/gray background */
             border-bottom: 1px solid #ddd;
         }
         .message {
-            margin-bottom: 12px;
+            margin-bottom: 10px;
             padding: 10px 15px;
-            border-radius: 15px;
-            max-width: 85%;
-            line-height: 1.5;
-            font-size: 14px;
-            word-wrap: break-word;
+            border-radius: 20px;
+            max-width: 80%;
+            line-height: 1.4;
         }
         .user {
-            background-color: #24292e; /* Darker Rutgers accent */
+            background-color: #007bff; /* Rutgers Blue */
             color: white;
             margin-left: auto;
-            border-bottom-right-radius: 2px;
+            border-bottom-right-radius: 5px; /* sharper edge on sending side */
         }
         .bot {
-            background-color: #ffffff;
+            background-color: #ffffff; /* White bubble for bot */
             color: #333;
             margin-right: auto;
             border: 1px solid #e0e0e0;
-            border-bottom-left-radius: 2px;
-        }
-        /* --- STYLING THE SOURCE LINKS --- */
-        .source-link {
-            display: inline-block;
-            background-color: #f0f0f0;
-            color: #d80c35; /* Rutgers Scarlet */
-            padding: 1px 5px;
-            border-radius: 3px;
-            text-decoration: none;
-            font-size: 11px;
-            margin-right: 3px;
-            font-weight: bold;
-            border: 1px solid #dcdcdc;
-        }
-        .source-link:hover {
-            background-color: #d80c35;
-            color: white;
-            border-color: #b00a2b;
+            border-bottom-left-radius: 5px; /* sharper edge on receiving side */
         }
         #chat-input-area {
             display: flex;
-            padding: 15px;
+            padding: 10px;
             background-color: #ffffff;
-            gap: 10px;
         }
         #user-input {
             flex-grow: 1;
-            padding: 12px;
+            padding: 10px;
             border: 1px solid #ccc;
-            border-radius: 8px;
+            border-radius: 20px; /* Rounded input field */
+            margin-right: 10px;
             font-size: 14px;
-            outline: none;
         }
         #send-btn {
-            background-color: #d80c35;
+            background-color: #d80c35; /* Rutgers Scarlet */
             color: white;
             border: none;
-            padding: 0 20px;
-            border-radius: 8px;
+            padding: 10px 15px;
+            border-radius: 20px;
             cursor: pointer;
-            font-weight: bold;
-            transition: 0.2s;
+            font-size: 14px;
+            transition: background-color 0.2s;
         }
-        #send-btn:hover:not(:disabled) { background-color: #b00a2b; }
-        #send-btn:disabled { background-color: #aaa; }
-        
-        .bot-thinking {
+        #send-btn:hover:not(:disabled) {
+            background-color: #b00a2b;
+        }
+        #send-btn:disabled {
+            background-color: #aaa;
+            cursor: not-allowed;
+        }
+        .thinking {
             font-style: italic;
             color: #888;
-            background-color: transparent;
-            border: none;
+            background-color: #f0f0f0;
+        }
+        .error {
+            color: #d80c35;
+            font-weight: bold;
         }
     </style>
 </head>
 <body>
     <div id="chatbot-container">
         <div id="chat-messages">
-            <div class="message bot">Hello! I'm <b>Friday</b>, the SPAA assistant at Rutgers University-Newark. How can I help you today?</div>
+            <div class="message bot">Hello! I'm **Friday**, the SPAA assistant at Rutgers University-Newark. How can I help you today?</div>
         </div>
         <div id="chat-input-area">
-            <input type="text" id="user-input" placeholder="Ask about SPAA admissions, programs...">
+            <input type="text" id="user-input" placeholder="Ask your question here...">
             <button id="send-btn">Send</button>
         </div>
     </div>
     
     <script>
-        // --- CONFIGURATION ---
-        const API_ENDPOINT = 'http://localhost:5000/chat'; // Ensure this matches your Flask port
+        // --- JAVASCRIPT LOGIC ---
+        const API_ENDPOINT = 'https://api.drtongc.space/chat';
 
-        // 1. Session Management
+        // 1. Generate or load session_id (NEW)
         let session_id = localStorage.getItem("spaa_session_id");
         if (!session_id) {
             session_id = crypto.randomUUID();
             localStorage.setItem("spaa_session_id", session_id);
         }
 
-        const userInput = document.getElementById('user-input');
-        const sendBtn = document.getElementById('send-btn');
-        const messagesDiv = document.getElementById('chat-messages');
+        // 2. Variable to store the entire conversation history (client-side)
+        let conversationContext = ""; 
 
-        // 2. Event Listeners
-        sendBtn.addEventListener('click', sendMessage);
-        userInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
+        document.getElementById('send-btn').addEventListener('click', sendMessage);
+        document.getElementById('user-input').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') sendMessage();
+        });
 
         async function sendMessage() {
+            const userInput = document.getElementById('user-input');
             const question = userInput.value.trim();
             if (!question) return;
 
-            // Add user message to UI
             appendMessage(question, 'user');
             userInput.value = '';
 
-            // Add "Thinking" placeholder
-            const thinkingMsg = appendMessage('Friday is looking that up...', 'bot-thinking');
+            const thinkingMsg = appendMessage('Friday is typing...', 'bot-thinking');
 
-            // Disable UI
             userInput.disabled = true;
-            sendBtn.disabled = true;
+            document.getElementById('send-btn').disabled = true;
 
             try {
                 const response = await fetch(API_ENDPOINT, {
@@ -149,46 +134,72 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         question: question,
-                        session_id: session_id
+                        context: conversationContext,
+                        session_id: session_id        // 🔥 add session_id here
                     })
                 });
 
-                if (!response.ok) throw new Error('Server unreachable');
+                if (!response.ok) throw new Error(`Server error: ${response.status}`);
 
                 const data = await response.json();
-                
-                // --- UPDATE UI WITH HTML RESPONSE ---
-                // We use innerHTML here to render the <small> and <a> tags for sources
-                thinkingMsg.innerHTML = data.answer;
+                const answer = data.answer;
+
+                thinkingMsg.textContent = answer;
                 thinkingMsg.classList.remove('bot-thinking');
                 thinkingMsg.classList.add('bot');
 
+                // Update context for next request
+                conversationContext += `\nUser: ${question}\nAI: ${answer}`;
+
             } catch (error) {
-                thinkingMsg.innerHTML = "Sorry, I'm having trouble connecting to my brain right now. Please try again.";
-                thinkingMsg.style.color = "red";
+                thinkingMsg.textContent = "Error: Unable to reach server";
+                thinkingMsg.classList.add('error');
+
             } finally {
                 userInput.disabled = false;
-                sendBtn.disabled = false;
-                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                document.getElementById('send-btn').disabled = false;
                 userInput.focus();
             }
         }
 
-        function appendMessage(text, type) {
-            const msg = document.createElement('div');
-            msg.className = `message ${type}`;
+        function appendMessage(text, sender) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const messageElement = document.createElement('div');
             
-            // If it's a bot message, we might have HTML (sources)
-            if (type === 'bot') {
-                msg.innerHTML = text;
+            // The sender could be 'user', 'bot-thinking', or 'bot'
+            messageElement.classList.add('message', sender); 
+            
+            // If the message is the initial thinking message, it should just be placed, 
+            // but if it's the final answer, you need to swap the class (done above in sendMessage)
+            if (sender === 'bot') {
+                 messageElement.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
             } else {
-                msg.textContent = text;
+                 messageElement.textContent = text;
             }
-            
-            messagesDiv.appendChild(msg);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            return msg;
+        
+            messagesDiv.appendChild(messageElement);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight; 
+            return messageElement;
         }
+        
+        function appendMessage(text, sender) {
+            const messagesDiv = document.getElementById('chat-messages');
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', sender);
+            
+            // Simple method to display initial bold text (for welcome message)
+            if (sender === 'bot') {
+                 messageElement.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+            } else {
+                 messageElement.textContent = text;
+            }
+
+            messagesDiv.appendChild(messageElement);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll to bottom
+            return messageElement;
+        }
+
     </script>
 </body>
 </html>
+
