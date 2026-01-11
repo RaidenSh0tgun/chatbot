@@ -24,15 +24,18 @@ from datetime import datetime
 # ----------------------------
 os.makedirs("conversation", exist_ok=True)
 
-def save_to_csv(session_id: str, sender: str, message: str) -> None:
+def save_to_csv(session_id: str, sender: str, message: str, search_query: str = "") -> None:
     filename = f"conversation/{session_id}.csv"
     file_exists = os.path.isfile(filename)
 
     with open(filename, "a", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
         if not file_exists:
-            writer.writerow(["timestamp", "session_id", "sender", "message"])
-        writer.writerow([datetime.now().isoformat(), session_id, sender, message])
+            # Added "search_query" to the header
+            writer.writerow(["timestamp", "session_id", "sender", "message", "search_query"])
+        
+        # Added search_query to the row data
+        writer.writerow([datetime.now().isoformat(), session_id, sender, message, search_query])
 
 # ----------------------------
 # 2) FLASK & MEMORY
@@ -186,7 +189,7 @@ def chat_endpoint():
         conversation_memory[session_id] = []
 
     # Save user input to CSV
-    save_to_csv(session_id, "User", question)
+    save_to_csv(session_id, "User", question, search_query="")
 
     # Prepare history for routing + answering
     history_string = "\n".join(conversation_memory[session_id]).strip()
@@ -204,8 +207,14 @@ def chat_endpoint():
 
     # Optional: log router decisions for debugging
     # Comment out if you prefer not to log internal behavior.
-    save_to_csv(session_id, "Router", f"use_retrieval={use_retrieval}; search_query={search_query}; reason={router_reason}")
-
+    # Log router decisions with the search_query column populated
+    save_to_csv(
+        session_id, 
+        "Router", 
+        f"use_retrieval={use_retrieval}; reason={router_reason}", 
+        search_query=search_query
+    )
+    
     # --- STEP A1: CONDITIONAL RETRIEVAL ---
     docs = []
     info_text = ""
@@ -253,7 +262,8 @@ def chat_endpoint():
         cleaned_sources = []
 
     # --- STEP D: LOGGING & MEMORY UPDATE ---
-    save_to_csv(session_id, "Assistant", final_display_answer)
+    # Log Assistant response with the search_query used for this turn
+    save_to_csv(session_id, "Assistant", final_display_answer, search_query=search_query)
 
     # Save clean text to memory (avoid HTML tags cluttering next turn)
     conversation_memory[session_id].append(f"User: {question}")

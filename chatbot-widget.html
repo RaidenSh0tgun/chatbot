@@ -144,7 +144,7 @@
                 const data = await response.json();
                 const answer = data.answer;
 
-                thinkingMsg.textContent = answer;
+                thinkingMsg.innerHTML = answer;
                 thinkingMsg.classList.remove('bot-thinking');
                 thinkingMsg.classList.add('bot');
 
@@ -166,38 +166,25 @@
             const messagesDiv = document.getElementById('chat-messages');
             const messageElement = document.createElement('div');
             
-            // The sender could be 'user', 'bot-thinking', or 'bot'
             messageElement.classList.add('message', sender); 
-            
-            // If the message is the initial thinking message, it should just be placed, 
-            // but if it's the final answer, you need to swap the class (done above in sendMessage)
-            if (sender === 'bot') {
-                 messageElement.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+
+            if (sender === 'user') {
+                // Users usually send plain text
+                messageElement.textContent = text;
             } else {
-                 messageElement.textContent = text;
+                // Bot messages (including the initial welcome and thinking message)
+                // We use innerHTML to allow the links and <br> from the backend to work
+                // We also apply a simple regex to handle **bold** text if it exists
+                let formattedText = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+                messageElement.innerHTML = formattedText;
             }
-        
+
             messagesDiv.appendChild(messageElement);
             messagesDiv.scrollTop = messagesDiv.scrollHeight; 
             return messageElement;
         }
         
-        function appendMessage(text, sender) {
-            const messagesDiv = document.getElementById('chat-messages');
-            const messageElement = document.createElement('div');
-            messageElement.classList.add('message', sender);
-            
-            // Simple method to display initial bold text (for welcome message)
-            if (sender === 'bot') {
-                 messageElement.innerHTML = text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-            } else {
-                 messageElement.textContent = text;
-            }
-
-            messagesDiv.appendChild(messageElement);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll to bottom
-            return messageElement;
-        }
+        
 
     </script>
 </body>
