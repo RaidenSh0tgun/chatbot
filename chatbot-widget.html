@@ -68,6 +68,24 @@
         
         /* Thinking state */
         .thinking { font-style: italic; color: #888; }
+
+        /* Align user timestamp to the right, bot to the left */
+        .message-timestamp {
+            font-size: 11px;
+            color: #9ca3af;
+            margin-top: 4px;
+            display: block;
+        }
+
+        .user-msg .message-timestamp {
+            text-align: right;
+            margin-right: 4px;
+        }
+
+        .bot-msg .message-timestamp {
+            text-align: left;
+            margin-left: 2px;
+        }
     </style>
 </head>
 <body>
@@ -80,10 +98,12 @@
     <main class="webchat-messages" id="chat-scroll">
         <div class="message-list" id="message-list">
             <div class="message bot-msg">
+                <div class="message-type-icon"><img src="https://marshall-data-bucket-production.s3.amazonaws.com/6a59463e11f143b09/caab9903cb4944a89bd86e417380af6d" class="ai-avatar" width="24" height="24"></div>
                 <div class="message-content">
                     <div class="message-bubble">
                         Hello! I'm <b>Friday</b>, the SPAA assistant at Rutgers University-Newark. How can I help you today?
                     </div>
+                    <div class="message-timestamp">Just now</div>
                 </div>
             </div>
         </div>
@@ -179,14 +199,19 @@
         const msgDiv = document.createElement('div');
         msgDiv.className = `message ${sender === 'user' ? 'user-msg' : 'bot-msg'}`;
 
+        // Get current time in HH:MM AM/PM format
+        const now = new Date();
+        const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
         // Add Avatar for Bot only
         let avatarHtml = sender === 'bot' ? 
-            `<div class="message-type-icon"><img src="https://via.placeholder.com/18" class="ai-avatar" width="18" height="18"></div>` : '';
+            `<div class="message-type-icon"><img src="https://marshall-data-bucket-production.s3.amazonaws.com/6a59463e11f143b09/caab9903cb4944a89bd86e417380af6d" class="ai-avatar" width="18" height="18"></div>` : '';
 
         msgDiv.innerHTML = `
             ${avatarHtml}
             <div class="message-content">
                 <div class="message-bubble">${text}</div>
+                <div class="message-timestamp">${timeString}</div>
             </div>
         `;
 
