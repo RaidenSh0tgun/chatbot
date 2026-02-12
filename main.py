@@ -6,7 +6,12 @@
 # - If retrieval is needed, LLM generates a search query using question + conversation history
 # - Robust JSON parsing + safe fallbacks
 # - Citations rendered as clickable [1], [2], ... links when sources exist
-
+# NEW
+try:
+    from langdetect import detect, LangDetectException
+except Exception:
+    detect = None
+    LangDetectException = Exception
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from langchain_ollama.llms import OllamaLLM
@@ -28,8 +33,8 @@ def save_to_csv(session_id: str, sender: str, message: str, search_query: str = 
     filename = f"conversation/{session_id}.csv"
     file_exists = os.path.isfile(filename)
 
-    with open(filename, "a", newline="", encoding="utf-8") as csvfile:
-        writer = csv.writer(csvfile)
+    with open(filename, "a", newline="", encoding="utf-8-sig") as csvfile:
+        writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL)
         if not file_exists:
             # Added "search_query" to the header
             writer.writerow(["timestamp", "session_id", "sender", "message", "search_query"])
@@ -56,9 +61,9 @@ print("Connecting to Vector Database...")
 embeddings = OllamaEmbeddings(model="mxbai-embed-large")
 vector_db = Chroma(
     persist_directory="./chroma_db",
-    embedding_function=embeddings
+    embedding_function=embeddings,
+    collection_name="rutgers_corpus"   # <-- add this
 )
-
 # Default retriever settings (router can optionally override k if you extend it)
 retriever = vector_db.as_retriever(
     search_kwargs={"k": 5}
@@ -68,7 +73,7 @@ retriever = vector_db.as_retriever(
 # 4) LLM
 # ----------------------------
 # You can swap models; keep router+answer on same model for simplicity
-model = OllamaLLM(model="gemma3:4b")
+model = OllamaLLM(model="qwen2.5")
 
 # ----------------------------
 # 5) ROUTER PROMPT (LLM decides retrieval + search query)
@@ -76,19 +81,15 @@ model = OllamaLLM(model="gemma3:4b")
 router_template = """
 You are a routing module for a Rutgers SPAA chatbot.
 
+User language: {user_lang_name} ({user_lang})
+
 Goal:
 Decide whether you must consult the knowledge base (vector database) to answer accurately.
 If needed, generate an effective search query grounded in the user's question AND the conversation history.
 
-Use retrieval when:
-- The user asks for SPAA-specific facts (people, programs, admissions, deadlines, tuition/fees, offices, contacts, policies, forms, procedures, locations).
-- The user refers to something likely in SPAA webpages or internal documents.
-- The user asks for URLs, official details, step-by-step SPAA instructions, or factual claims about SPAA.
-
-Do NOT use retrieval when:
-- The user asks for generic advice, general concepts, brainstorming, or rewriting text.
-- The user is only asking to format/rephrase something already in conversation history.
-- The question can be answered without SPAA-specific facts.
+Important:
+- The vector database content is primarily in English.
+- If the user language is not English, translate the search query into concise English keywords for best retrieval.
 
 Conversation History (most recent last):
 {context}
@@ -103,11 +104,12 @@ Return ONLY valid JSON with exactly these keys:
 
 Rules:
 - If use_retrieval is false, set search_query to "".
-- If use_retrieval is true, search_query MUST be a short, high-signal query (not a full paragraph).
+- If use_retrieval is true, search_query MUST be short, high-signal English keywords (not a full paragraph).
 - Do not include any keys beyond the three keys above.
 
 JSON:
 """
+
 router_prompt = ChatPromptTemplate.from_template(router_template)
 router_chain = router_prompt | model
 
@@ -150,15 +152,60 @@ def parse_router_json(text) -> dict:
     }
 
 # ----------------------------
+# 5.1) POST-RETRIEVAL FILTER PROMPT (NEW)
+# ----------------------------
+filter_template = """
+You are a Document Relevance Filter for Rutgers SPAA.
+
+User language: {user_lang_name} ({user_lang})
+
+User Question: {question}
+Conversation History: {context}
+
+Retrieved Documents:
+{docs_content}
+
+Task:
+1. Review each document above.
+2. Select ONLY the documents that are factually relevant to the user's specific question.
+3. Return the results as a JSON list of indices (0-indexed).
+
+Example Output:
+{{ "selected_indices": [0, 2] }}
+
+Return ONLY JSON.
+JSON:
+"""
+
+filter_prompt = ChatPromptTemplate.from_template(filter_template)
+filter_chain = filter_prompt | model
+
+def parse_filter_json(text) -> list:
+    """Extracts the list of selected indices from the LLM output."""
+    try:
+        # Simple extraction logic similar to your router parser
+        m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if m:
+            obj = json.loads(m.group(0))
+            return obj.get("selected_indices", [])
+    except:
+        pass
+    return [] # If parsing fails, we handle it in the endpoint
+
+
+# ----------------------------
 # 6) ANSWER PROMPT (uses retrieval results if provided)
 # ----------------------------
 answer_template = """
-Your name is Friday. You are a helpful assistant for the School of Public Affairs and Administration (SPAA) at Rutgers University-Newark.
+Your name is SPAA Bot. You are a helpful assistant for the School of Public Affairs and Administration (SPAA) at Rutgers University-Newark.
+
+User language: {user_lang_name} ({user_lang})
 
 ### INSTRUCTIONS:
 - Do NOT introduce yourself or state your name in your response. 
 - Do NOT say "Hello" or "Hi" unless the user is specifically greeting you for the first time.
 - Answer in 1-5 sentences unless requested otherwise.
+- If the user language is not English, respond in {user_lang_name}. Keep proper nouns (program names, office names) in English if they appear in the source text.
 - Ground your answer ONLY in the Related Information provided.
 
 Conversation History:
@@ -173,8 +220,61 @@ Instructions:
 - If Related Information is provided, ground your answer in it. Do not invent SPAA-specific facts that are not supported by it.
 - If Related Information is empty, answer using general knowledge and the Conversation History only, but do not fabricate SPAA-specific facts (names, dates, requirements, contacts). If the question requires SPAA-specific facts and you lack them, say you don't know and suggest what to ask for.
 """
+
 answer_prompt = ChatPromptTemplate.from_template(answer_template)
 answer_chain = answer_prompt | model
+
+#Extra: Language Detect
+# NEW: very small mapping for prompt friendliness
+LANG_NAME = {
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "zh-cn": "Chinese (Simplified)",
+    "zh-tw": "Chinese (Traditional)",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ru": "Russian",
+    "ar": "Arabic",
+    "hi": "Hindi"
+}
+
+def normalize_lang(code: str) -> str:
+    if not code:
+        return "en"
+    c = code.lower().strip()
+    # langdetect returns 'zh-cn'/'zh-tw' sometimes; keep as-is
+    return c
+
+def detect_user_language(text: str) -> str:
+    """
+    Returns a short language code like 'en', 'es', 'zh-cn', etc.
+    Falls back to 'en' if uncertain.
+    """
+    t = (text or "").strip()
+    if not t:
+        return "en"
+
+    # Quick heuristic: if lots of CJK chars, force 'zh' (helps reliability)
+    cjk = sum(1 for ch in t if '\u4e00' <= ch <= '\u9fff')
+    if cjk >= 2:
+        return "zh"
+
+    if detect is None:
+        return "en"
+
+    try:
+        code = detect(t)
+        return normalize_lang(code)
+    except LangDetectException:
+        return "en"
+
+def lang_display(code: str) -> str:
+    return LANG_NAME.get(code, code)
 
 # ----------------------------
 # 7) CHAT ENDPOINT
@@ -198,11 +298,18 @@ def chat_endpoint():
     # Prepare history for routing + answering
     history_string = "\n".join(conversation_memory[session_id]).strip()
 
+    # NEW: detect language from the current question (or you can include history too)
+    user_lang = detect_user_language(question)
+    user_lang_name = lang_display(user_lang)
+
     # --- STEP A0: ROUTE (LLM decides retrieval + builds query) ---
     router_raw = router_chain.invoke({
         "context": history_string,
-        "question": question
+        "question": question,
+        "user_lang": user_lang,
+        "user_lang_name": user_lang_name
     })
+
     router_decision = parse_router_json(router_raw)
 
     use_retrieval = bool(router_decision.get("use_retrieval", True))
@@ -219,32 +326,61 @@ def chat_endpoint():
         search_query=search_query
     )
     
-    # --- STEP A1: CONDITIONAL RETRIEVAL ---
+    # --- STEP A1: RETRIEVAL ---
     docs = []
-    info_text = ""
-    sources = []
-
     if use_retrieval:
         effective_query = search_query if search_query else question
         try:
             docs = retriever.invoke(effective_query)
         except Exception as e:
-            # If retrieval fails, proceed without info
-            docs = []
             save_to_csv(session_id, "System", f"Retriever error: {repr(e)}")
 
-        info_text = "\n\n".join([doc.page_content for doc in docs]) if docs else ""
-        sources = list(set([doc.metadata.get('source', 'Unknown source') for doc in docs])) if docs else []
+        # --- STEP A2: POST-RETRIEVAL FILTERING (NEW) ---
+        if docs:
+            # Prepare the documents for the LLM to review
+            docs_content_for_filter = ""
+            for i, d in enumerate(docs):
+                docs_content_for_filter += (
+                    f"[{i}] SOURCE_URL: {d.metadata.get('source_url')}\n"
+                    f"SOURCE_FILE: {d.metadata.get('source_file')}\n"
+                    f"CONTENT: {d.page_content}\n---\n"
+                )
+            filter_raw = filter_chain.invoke({
+                "question": question,
+                "context": history_string,
+                "docs_content": docs_content_for_filter,
+                "user_lang": user_lang,
+                "user_lang_name": user_lang_name
+            })
+
+            
+            selected_indices = parse_filter_json(filter_raw)
+            
+            # If the LLM selected specific docs, filter the list. 
+            # Otherwise, keep all docs as a fallback.
+            if selected_indices:
+                filtered_docs = [docs[i] for i in selected_indices if i < len(docs)]
+                if filtered_docs:
+                    docs = filtered_docs
+                    save_to_csv(session_id, "System", f"Filtered docs from {len(docs_content_for_filter.split('---'))-1} down to {len(docs)}")
+
+        # Final preparation of text for the Answer Chain
+        info_text = "\n\n".join([doc.page_content for doc in docs])
+        sources = list(set([doc.metadata.get("source_url", "Unknown source") for doc in docs]))
     else:
         info_text = ""
         sources = []
 
     # --- STEP B: GENERATE RESPONSE ---
+    # Now uses the filtered info_text
     ai_response_text = answer_chain.invoke({
         "context": history_string,
         "info": info_text,
-        "question": question
+        "question": question,
+        "user_lang": user_lang,
+        "user_lang_name": user_lang_name
     })
+
 
     # Ensure ai_response_text is a string
     if not isinstance(ai_response_text, str):
