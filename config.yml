@@ -1,0 +1,7 @@
+ingress:
+  # Route traffic for the API subdomain to your local Python server
+  - hostname: api.drtongc.space
+    service: http://localhost:5000
+    
+  # Catch-all rule: ensures the tunnel doesn't hang if an unexpected request comes in
+  - service: http_status:404

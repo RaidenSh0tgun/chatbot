@@ -16,3 +16,6 @@ python .\vector.py
 
 *test Q&A
 python .\test.py
+
+*snakefile
+snakemake README.md
