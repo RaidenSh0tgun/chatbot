@@ -163,34 +163,36 @@
         sendBtn.disabled = true;
 
         // Add placeholder "thinking" message
-        const thinkingMsg = appendMessage('Friday is typing...', 'bot');
+        const thinkingMsg = appendMessage('Spaarkly is typing...', 'bot');
         thinkingMsg.classList.add('thinking');
 
         try {
-            const response = await fetch(API_ENDPOINT, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    question: question,
-                    context: conversationContext,
-                    session_id: session_id
-                })
-            });
+        const response = await fetch(API_ENDPOINT, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, session_id })
+        });
 
-            const data = await response.json();
-            const answer = data.answer;
+        const raw = await response.text(); // read text first (works even if not JSON)
 
-            // Update thinking message with actual answer
-            thinkingMsg.innerHTML = answer.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-            thinkingMsg.classList.remove('thinking');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${raw.slice(0, 200)}`);
+        }
 
-            conversationContext += `\nUser: ${question}\nAssistant: ${data.raw_text}`;
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch {
+            throw new Error(`Non-JSON response: ${raw.slice(0, 200)}`);
+        }
+
+        const answer = data.answer || "(No answer field returned)";
+        thinkingMsg.innerHTML = answer.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+        thinkingMsg.classList.remove('thinking');
 
         } catch (error) {
-            thinkingMsg.textContent = "Error: Unable to reach server.";
-            thinkingMsg.style.color = "red";
-        } finally {
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+        thinkingMsg.textContent = `Error: ${String(error.message || error)}`.slice(0, 180);
+        thinkingMsg.style.color = "red";
         }
     }
 
