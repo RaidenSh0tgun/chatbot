@@ -58,7 +58,7 @@ MAX_MEMORY_LINES = 10  # (each turn adds 2 lines: user + assistant)
 # 3) VECTOR DB (RAG)
 # ----------------------------
 print("Connecting to Vector Database...")
-embeddings = OllamaEmbeddings(model="mxbai-embed-large")
+embeddings = OllamaEmbeddings(model="nomic-embed-text")
 vector_db = Chroma(
     persist_directory="./chroma_db",
     embedding_function=embeddings,
@@ -79,7 +79,7 @@ model = OllamaLLM(model="qwen2.5")
 # 5) ROUTER PROMPT (LLM decides retrieval + search query)
 # ----------------------------
 router_template = """
-You are a routing module for a Rutgers SPAA chatbot.
+You are a routing module for a chatbot of Rutgers School of Public Affairs and Administration (SPAA).
 
 User language: {user_lang_name} ({user_lang})
 
@@ -88,14 +88,9 @@ Decide whether you must consult the knowledge base (vector database) to answer a
 If needed, generate an effective search query grounded in the user's question AND the conversation history.
 
 Use retrieval when:
-- The user asks for SPAA-specific facts (people, programs, admissions, deadlines, tuition/fees, offices, contacts, policies, forms, procedures, locations).
-- The user refers to something likely in SPAA webpages or internal documents.
-- The user asks for URLs, official details, step-by-step SPAA instructions, or factual claims about SPAA.
-
-Do NOT use retrieval when:
-- The user asks for generic advice, general concepts, brainstorming, or rewriting text.
-- The user is only asking to format/rephrase something already in conversation history.
-- The question can be answered without SPAA-specific facts.
+- The user asks for shcool-specific facts (phd, mpa, undergraduate, people, programs, admissions, deadlines, tuition/fees, offices, contacts, policies, forms, procedures, locations, courses, classes).
+- The user refers to something likely in school webpages or internal documents.
+- The user asks for URLs, official details, step-by-step instructions, or factual claims about the school.
 
 Important:
 - The vector database content is primarily in English.

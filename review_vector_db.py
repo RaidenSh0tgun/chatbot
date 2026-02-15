@@ -29,10 +29,10 @@ from langchain_ollama import OllamaEmbeddings
 # ---------- CONFIG (match main.py) ----------
 PERSIST_DIR = "./chroma_db"
 COLLECTION_NAME = "rutgers_corpus"
-EMBED_MODEL = "mxbai-embed-large"
+EMBED_MODEL = "nomic-embed-text"
 
-DEFAULT_K = 10
-PREVIEW_CHARS = 750  # how much content to show per chunk
+DEFAULT_K = 15
+PREVIEW_CHARS = 1200  # how much content to show per chunk
 
 
 def fmt(text: str, width: int = 100) -> str:

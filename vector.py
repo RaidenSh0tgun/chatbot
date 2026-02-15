@@ -15,12 +15,12 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # ------------------------
 DATA_DIR = "./Data"          # folder containing rutgers_spaa_data.json, rutgers_oiss_data.json, etc.
 DB_PATH = "./chroma_db"
-EMBED_MODEL = "mxbai-embed-large"
+EMBED_MODEL = "nomic-embed-text"
 
 # Chunking: keep these consistent after you start building the DB
-CHUNK_SIZE = 800
-CHUNK_OVERLAP = 150
-SAFE_TEXT_CAP = 1500
+CHUNK_SIZE = 1200
+CHUNK_OVERLAP = 200
+SAFE_TEXT_CAP = 2000
 
 # If True: wipe DB and rebuild from scratch every time
 REBUILD_FROM_SCRATCH = False
