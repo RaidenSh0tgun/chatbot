@@ -66,7 +66,7 @@ vector_db = Chroma(
 )
 # Default retriever settings (router can optionally override k if you extend it)
 retriever = vector_db.as_retriever(
-    search_kwargs={"k": 5}
+    search_kwargs={"k": 15}
 )
 
 # ----------------------------
@@ -86,6 +86,16 @@ User language: {user_lang_name} ({user_lang})
 Goal:
 Decide whether you must consult the knowledge base (vector database) to answer accurately.
 If needed, generate an effective search query grounded in the user's question AND the conversation history.
+
+Use retrieval when:
+- The user asks for SPAA-specific facts (people, programs, admissions, deadlines, tuition/fees, offices, contacts, policies, forms, procedures, locations).
+- The user refers to something likely in SPAA webpages or internal documents.
+- The user asks for URLs, official details, step-by-step SPAA instructions, or factual claims about SPAA.
+
+Do NOT use retrieval when:
+- The user asks for generic advice, general concepts, brainstorming, or rewriting text.
+- The user is only asking to format/rephrase something already in conversation history.
+- The question can be answered without SPAA-specific facts.
 
 Important:
 - The vector database content is primarily in English.

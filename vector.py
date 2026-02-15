@@ -18,8 +18,8 @@ DB_PATH = "./chroma_db"
 EMBED_MODEL = "mxbai-embed-large"
 
 # Chunking: keep these consistent after you start building the DB
-CHUNK_SIZE = 750
-CHUNK_OVERLAP = 100
+CHUNK_SIZE = 800
+CHUNK_OVERLAP = 150
 SAFE_TEXT_CAP = 1500
 
 # If True: wipe DB and rebuild from scratch every time
