@@ -1,1 +1,7 @@
+tunnel: 5aaee62d-fbfe-4cbb-8cf1-a13d75323bbf
+credentials-file: C:\Users\Tong Chen\.cloudflared\5aaee62d-fbfe-4cbb-8cf1-a13d75323bbf.json
 
+ingress:
+  - hostname: api.drtongc.space
+    service: http://localhost:5000
+  - service: http_status:404
