@@ -110,6 +110,7 @@ Persona guidance:
 - nonprofit_professional: prioritize nonprofit management, leadership, governance, fundraising, and mission-driven career relevance.
 - law_enforcement: prioritize public service, public safety leadership, administration, ethics, and policy relevance when supported by school content.
 - student: prioritize current student procedures, registration, advising, graduation, and support services.
+- prospective_student: prioritize admissions, deadlines, requirements, tuition, and program fit.
 - international_user: prioritize international admissions, visa/I-20 support, and international student services when supported by the content.
 - faculty_or_staff: prioritize administrative, academic, and office information.
 - general_public / unknown: use the user's actual question without forcing a role-specific angle.
@@ -260,6 +261,7 @@ Choose exactly one persona from:
 - government_employee
 - nonprofit_professional
 - student
+- prospective_student
 - international_user
 - faculty_or_staff
 - general_public
@@ -273,6 +275,7 @@ Rules:
 - Use government_employee only if the user clearly indicates they work for government, public administration, or a public agency.
 - Use nonprofit_professional only if the user clearly indicates they work for, manage, or lead a nonprofit or NGO.
 - Use student if the user clearly indicates they are a current student.
+- Use prospective_student if the user is clearly asking as an applicant or potential future student.
 - Use international_user if the user clearly indicates international admissions, visa, I-20, or related international student identity or needs.
 - Use faculty_or_staff if the user clearly indicates they are an instructor, professor, administrator, or university staff member.
 - Use general_public for broad public questions with no meaningful role signal.
@@ -337,7 +340,7 @@ Your name is SPAA Bot. You are a helpful assistant for the School of Public Affa
 User language: {user_lang_name} ({user_lang})
 Detected persona: {persona}
 Persona confidence: {persona_confidence}
-Acknowledgment: {acknowledgment_to_use}
+Acknowledgment to use: {acknowledgment_to_use}
 
 ### INSTRUCTIONS:
 - Do NOT introduce yourself or state your name in your response.
@@ -346,7 +349,7 @@ Acknowledgment: {acknowledgment_to_use}
 - If the user language is not English, respond in {user_lang_name}. Keep proper nouns (program names, office names) in English if they appear in the source text.
 - Ground your answer ONLY in the Related Information provided.
 - Tailor the response to the user's likely background when relevant.
-- If Acknowledgment is not empty, begin the response with that exact acknowledgment sentence.
+- If Acknowledgment to use is not empty, you may include it naturally at the beginning of the response.
 - Do not overdo personalization and do not repeat acknowledgment unless it is supplied for this turn.
 - Do not explicitly mention persona classification.
 
@@ -435,6 +438,7 @@ def sanitize_persona_label(label: str) -> str:
         "government_employee",
         "nonprofit_professional",
         "student",
+        "prospective_student",
         "international_user",
         "faculty_or_staff",
         "general_public",
@@ -443,33 +447,19 @@ def sanitize_persona_label(label: str) -> str:
     label = (label or "").strip()
     return label if label in allowed else "unknown"
 
-import random
-
 def sanitize_acknowledgment(persona: str, use_acknowledgment: bool, acknowledgment: str) -> str:
+    """
+    Restrict acknowledgment language to a small safe set so the model does not improvise
+    something overly strong or awkward.
+    """
     if not use_acknowledgment:
         return ""
 
     persona_to_ack = {
-        "veteran": [
-            "Thank you for your service.",
-            "We appreciate your service."
-        ],
-        "law_enforcement": [
-            "Thank you for your public service.",
-            "We appreciate your work in public safety."
-        ],
-        "government_employee": [
-            "It's great to see your work in public service.",
-            "It's great to connect with someone working in government."
-        ],
-        "nonprofit_professional": [
-            "It's great to see your work in the nonprofit sector.",
-            "It's great to connect with someone working in a nonprofit organization."
-        ]
+        "veteran": "Thank you for your service.",
+        "law_enforcement": "Thank you for your public service."
     }
-
-    options = persona_to_ack.get(persona, [])
-    return random.choice(options) if options else ""
+    return persona_to_ack.get(persona, "")
 
 
 # ----------------------------
@@ -636,8 +626,6 @@ def chat_endpoint():
         sources = list(set([doc.metadata.get("source_url", "Unknown source") for doc in docs]))
 
     # --- STEP B: GENERATE RESPONSE ---
-    print("ACKNOWLEDGMENT TO USE:", repr(acknowledgment_to_use))
-
     ai_response_text = answer_chain.invoke({
         "context": history_string,
         "info": info_text,
@@ -651,9 +639,6 @@ def chat_endpoint():
 
     if not isinstance(ai_response_text, str):
         ai_response_text = str(ai_response_text)
-
-    if acknowledgment_to_use:
-        ai_response_text = f"{acknowledgment_to_use} {ai_response_text}"
 
     # --- STEP C: FORMAT HTML CITATIONS ---
     cleaned_sources = [s for s in sources if s and s != "Unknown source"]
@@ -700,9 +685,5 @@ def chat_endpoint():
 # ----------------------------
 # 8) RUN SERVER
 # ----------------------------
-@app.route('/health', methods=['GET'])
-def health():
-    return jsonify({"status": "ok"}), 200
-
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
