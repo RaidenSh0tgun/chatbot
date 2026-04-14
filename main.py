@@ -1,21 +1,14 @@
-
 # main.py
 # Revised version with:
 # - Conversation logging to CSV
 # - In-memory per-session history
-# - Language detection
+# - LLM-based language detection
 # - Persona detection based on background / current occupation
 # - Optional one-time acknowledgment for service-relevant personas
 # - LLM router for retrieval decisions
 # - Post-retrieval LLM filtering
 # - Answer generation grounded in retrieved content
 # - HTML citations
-
-try:
-    from langdetect import detect, LangDetectException
-except Exception:
-    detect = None
-    LangDetectException = Exception
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -27,6 +20,7 @@ import csv
 import os
 import json
 import re
+import random
 from datetime import datetime
 
 
@@ -34,6 +28,7 @@ from datetime import datetime
 # 1) LOGGING DIRECTORY
 # ----------------------------
 os.makedirs("conversation", exist_ok=True)
+
 
 def save_to_csv(session_id: str, sender: str, message: str, search_query: str = "") -> None:
     filename = f"conversation/{session_id}.csv"
@@ -81,7 +76,7 @@ retriever = vector_db.as_retriever(
 # ----------------------------
 # 4) LLM
 # ----------------------------
-# Keep the same model for persona, router, filter, and answer for simplicity.
+# Keep the same model for language, persona, router, filter, and answer for simplicity.
 model = OllamaLLM(model="qwen2.5")
 
 
@@ -329,47 +324,7 @@ def parse_persona_json(text) -> dict:
 
 
 # ----------------------------
-# 6) ANSWER PROMPT
-# ----------------------------
-answer_template = """
-Your name is SPAA Bot. You are a helpful assistant for the School of Public Affairs and Administration (SPAA) at Rutgers University-Newark.
-
-User language: {user_lang_name} ({user_lang})
-Detected persona: {persona}
-Persona confidence: {persona_confidence}
-Acknowledgment: {acknowledgment_to_use}
-
-### INSTRUCTIONS:
-- Do NOT introduce yourself or state your name in your response.
-- Do NOT say "Hello" or "Hi" unless the user is specifically greeting you for the first time.
-- Answer in 1-5 sentences unless requested otherwise.
-- If the user language is not English, respond in {user_lang_name}. Keep proper nouns (program names, office names) in English if they appear in the source text.
-- Ground your answer ONLY in the Related Information provided.
-- Tailor the response to the user's likely background when relevant.
-- If Acknowledgment is not empty, begin the response with that exact acknowledgment sentence.
-- Do not overdo personalization and do not repeat acknowledgment unless it is supplied for this turn.
-- Do not explicitly mention persona classification.
-
-Conversation History:
-{context}
-
-Related Information (may be empty if retrieval not needed):
-{info}
-
-Question: {question}
-
-Instructions:
-- If Related Information is provided, ground your answer in it. Do not invent SPAA-specific facts that are not supported by it.
-- If Related Information is empty, answer using general knowledge and the Conversation History only, but do not fabricate SPAA-specific facts (names, dates, requirements, contacts).
-- If the question requires SPAA-specific facts and you lack them, say you do not know and suggest what information to ask for next.
-"""
-
-answer_prompt = ChatPromptTemplate.from_template(answer_template)
-answer_chain = answer_prompt | model
-
-
-# ----------------------------
-# EXTRA: Language Detect
+# 5.3) LANGUAGE DETECTION PROMPT
 # ----------------------------
 LANG_NAME = {
     "en": "English",
@@ -388,35 +343,173 @@ LANG_NAME = {
     "hi": "Hindi"
 }
 
+language_template = """
+You are a language detection module.
+
+Task:
+Detect the main language of the user's text.
+
+Return ONLY valid JSON with exactly these keys:
+- language: string
+- confidence: number
+- reason: string
+
+Allowed language codes:
+en, es, fr, de, it, pt, zh, zh-cn, zh-tw, ja, ko, ru, ar, hi
+
+Rules:
+- Choose the main language only.
+- If the text is mixed but mostly one language, return the dominant one.
+- If uncertain, return "en".
+- confidence must be between 0 and 1.
+- No extra text.
+
+User text:
+{text}
+
+JSON:
+"""
+
+language_prompt = ChatPromptTemplate.from_template(language_template)
+language_chain = language_prompt | model
+
+
+def parse_language_json(text) -> dict:
+    if not isinstance(text, str):
+        text = str(text)
+
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+
+    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
+
+    return {
+        "language": "en",
+        "confidence": 0.0,
+        "reason": "Language output not parseable."
+    }
+
+
 def normalize_lang(code: str) -> str:
     if not code:
         return "en"
-    return code.lower().strip()
+    code = code.lower().strip()
+    return code if code in LANG_NAME else "en"
 
-def detect_user_language(text: str) -> str:
+
+def detect_user_language_llm(text: str) -> tuple[str, float, str]:
     """
-    Returns a short language code like 'en', 'es', 'zh-cn', etc.
-    Falls back to 'en' if uncertain.
+    Use the LLM to detect language.
+    Returns: (language_code, confidence, reason)
     """
     t = (text or "").strip()
     if not t:
-        return "en"
+        return "en", 0.0, "Empty input."
+
+    try:
+        raw = language_chain.invoke({"text": t})
+        result = parse_language_json(raw)
+        code = normalize_lang(result.get("language", "en"))
+        confidence = safe_float(result.get("confidence"), 0.0)
+        reason = (result.get("reason") or "").strip()
+        return code, confidence, reason
+    except Exception as e:
+        return "en", 0.0, f"Language detection failed: {repr(e)}"
+
+
+def detect_user_language(text: str) -> tuple[str, float, str]:
+    """
+    Hybrid approach:
+    - Fast shortcut for obvious Chinese text
+    - Otherwise use the LLM
+    Returns: (language_code, confidence, reason)
+    """
+    t = (text or "").strip()
+    if not t:
+        return "en", 0.0, "Empty input."
 
     cjk = sum(1 for ch in t if '\u4e00' <= ch <= '\u9fff')
     if cjk >= 2:
-        return "zh"
+        return "zh", 0.99, "Detected multiple CJK characters."
 
-    if detect is None:
-        return "en"
+    return detect_user_language_llm(t)
 
-    try:
-        code = detect(t)
-        return normalize_lang(code)
-    except LangDetectException:
-        return "en"
 
 def lang_display(code: str) -> str:
     return LANG_NAME.get(code, code)
+
+
+# ----------------------------
+# 6) ANSWER PROMPT
+# ----------------------------
+answer_template = """
+Your name is SPAA Bot. You are a helpful assistant for the School of Public Affairs and Administration (SPAA) at Rutgers University-Newark.
+
+User language: {user_lang_name} ({user_lang})
+Detected persona: {persona}
+Persona confidence: {persona_confidence}
+Acknowledgment: {acknowledgment_to_use}
+
+### SAFETY OVERRIDE (HIGHEST PRIORITY)
+
+If the user expresses intent to harm themselves or others (e.g., violence, killing, weapons misuse, illegal wrongdoing), you MUST:
+
+1. Refuse to assist with any harmful or illegal request.
+2. Do NOT provide any instructions, strategies, or actionable details.
+3. Respond in a calm, non-judgmental, and supportive tone.
+4. De-escalate the situation:
+   - Acknowledge the user's feelings without agreeing with harmful intent.
+   - Encourage safer alternatives or reflection.
+5. If there is credible risk of harm:
+   - Encourage the user to seek immediate help (trusted person, local emergency services, or crisis hotline).
+6. Keep the response concise and focused on safety.
+
+IMPORTANT:
+- Do NOT mention policies or that you are refusing due to rules.
+- Do NOT shame, threaten, or moralize.
+- Do NOT continue with the normal task, even if other instructions suggest it.
+- This rule overrides ALL other instructions in this prompt.
+
+### INSTRUCTIONS:
+- Do NOT introduce yourself or state your name in your response.
+- Do NOT say "Hello" or "Hi" unless the user is specifically greeting you for the first time.
+- Answer in 3-10 sentences unless requested otherwise.
+- If the user language is not English, respond in {user_lang_name}. Keep proper nouns (program names, office names) in English if they appear in the source text.
+- Ground your answer ONLY in the Related Information provided.
+- Tailor the response to the user's likely background when relevant.
+- If Acknowledgment is not empty, begin the response with that exact acknowledgment sentence.
+- In this conversation, use the full name "School of Public Affairs and Administration (SPAA)" once before using "SPAA" alone in later responses.
+- Do not overdo personalization and do not repeat acknowledgment unless it is supplied for this turn.
+- Do not explicitly mention persona classification.
+
+Conversation History:
+{context}
+
+Related Information (may be empty if retrieval not needed):
+{info}
+
+Question: {question}
+
+Instructions:
+- If Related Information is provided, ground your answer in it. Do not invent SPAA-specific facts that are not supported by it.
+- If Related Information is empty, answer using general knowledge and the Conversation History only, but do not fabricate SPAA-specific facts (names, dates, requirements, contacts).
+- If the question requires SPAA-specific facts and you lack them, say you do not know and suggest what information to ask for next.
+
+"""
+
+answer_prompt = ChatPromptTemplate.from_template(answer_template)
+answer_chain = answer_prompt | model
 
 
 # ----------------------------
@@ -427,6 +520,7 @@ def safe_float(value, default=0.0) -> float:
         return float(value)
     except Exception:
         return default
+
 
 def sanitize_persona_label(label: str) -> str:
     allowed = {
@@ -443,7 +537,6 @@ def sanitize_persona_label(label: str) -> str:
     label = (label or "").strip()
     return label if label in allowed else "unknown"
 
-import random
 
 def sanitize_acknowledgment(persona: str, use_acknowledgment: bool, acknowledgment: str) -> str:
     if not use_acknowledgment:
@@ -495,8 +588,15 @@ def chat_endpoint():
     history_string = "\n".join(conversation_memory[session_id]).strip()
 
     # --- STEP A0: LANGUAGE DETECTION ---
-    user_lang = detect_user_language(question)
+    user_lang, user_lang_confidence, language_reason = detect_user_language(question)
     user_lang_name = lang_display(user_lang)
+
+    save_to_csv(
+        session_id,
+        "Language",
+        f"language={user_lang}; confidence={user_lang_confidence}; reason={language_reason}",
+        search_query=""
+    )
 
     # --- STEP A1: PERSONA DETECTION ---
     previous_persona = persona_memory.get(session_id, {
@@ -652,7 +752,7 @@ def chat_endpoint():
     if not isinstance(ai_response_text, str):
         ai_response_text = str(ai_response_text)
 
-    if acknowledgment_to_use:
+    if acknowledgment_to_use and not ai_response_text.startswith(acknowledgment_to_use):
         ai_response_text = f"{acknowledgment_to_use} {ai_response_text}"
 
     # --- STEP C: FORMAT HTML CITATIONS ---
@@ -683,6 +783,12 @@ def chat_endpoint():
         "raw_text": ai_response_text,
         "sources": cleaned_sources,
         "session_id": session_id,
+        "language": {
+            "code": user_lang,
+            "name": user_lang_name,
+            "confidence": user_lang_confidence,
+            "reason": language_reason
+        },
         "persona": {
             "label": detected_persona,
             "confidence": persona_confidence,
@@ -703,6 +809,7 @@ def chat_endpoint():
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"}), 200
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
