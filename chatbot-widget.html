@@ -39,7 +39,21 @@
             padding: 10px 14px; border-radius: 15px; 
             border: 1px solid #e1e4f0; position: relative;
         }
+        .message-bubble p {
+            margin: 0 0 10px 0;
+        }
 
+        .message-bubble p:last-child {
+            margin-bottom: 0;
+        }
+
+        .message-bubble strong {
+            font-weight: 700;
+        }
+
+        .message-bubble em {
+            font-style: italic;
+        }
         .bot-msg .message-bubble { background-color: white; color: #111827; border-bottom-left-radius: 2px; }
         .user-msg .message-bubble { background-color: #ce0e2d; color: white; border-bottom-right-radius: 2px; border: none; }
 
@@ -47,6 +61,26 @@
         .source-link { color: #007bff; text-decoration: none; font-weight: bold; margin-left: 4px; }
         .source-link:hover { text-decoration: underline; }
 
+        .message-sources {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        .message-sources small {
+            font-size: 12px;
+        }
+
+        .message-sources a {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: 600;
+            margin-left: 4px;
+        }
+
+        .message-sources a:hover {
+            text-decoration: underline;
+        }
         /* Input Area */
         .webchat-input { padding: 10px; border-top: 1px solid #e5e7eb; background: white; }
         .input-wrapper { position: relative; display: flex; align-items: center; }
@@ -181,7 +215,7 @@
             const answer = data.answer;
 
             // Update thinking message with actual answer
-            thinkingMsg.innerHTML = answer.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+            thinkingMsg.innerHTML = formatBotMessage(answer);
             thinkingMsg.classList.remove('thinking');
 
             conversationContext += `\nUser: ${question}\nAssistant: ${data.raw_text}`;
@@ -210,7 +244,7 @@
         msgDiv.innerHTML = `
             ${avatarHtml}
             <div class="message-content">
-                <div class="message-bubble">${text}</div>
+                <div class="message-bubble">${sender === 'bot' ? text : escapeHtml(text)}</div>
                 <div class="message-timestamp">${timeString}</div>
             </div>
         `;
@@ -221,6 +255,38 @@
         // Return the bubble element specifically so we can update it later (for thinking state)
         return msgDiv.querySelector('.message-bubble');
     }
+
+    function escapeHtml(str) {
+    return str
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+
+    function formatBotMessage(text) {
+        if (!text) return "";
+
+        // Escape first so model output cannot inject unsafe HTML.
+        let html = escapeHtml(text.trim());
+
+        // Markdown links: [label](https://example.edu)
+        html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+            '<a href="$2" target="_blank" rel="noopener noreferrer" class="source-link">$1</a>'
+        );
+
+        // Markdown-style emphasis.
+        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+
+        // Paragraphs, with single newlines preserved for contact blocks.
+        html = html
+            .split(/\n\s*\n/)
+            .map(p => `<p>${p.trim().replace(/\n/g, '<br>')}</p>`)
+            .join('');
+
+        return html;
+    }
+
 </script>
 
 </body>

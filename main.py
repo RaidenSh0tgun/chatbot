@@ -8,7 +8,7 @@
 # - LLM router for retrieval decisions
 # - Post-retrieval LLM filtering
 # - Answer generation grounded in retrieved content
-# - HTML citations
+# - Inline Markdown source links
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -190,6 +190,7 @@ Retrieved Documents:
 Task:
 1. Review each document above.
 2. Select ONLY the documents that are factually relevant to the user's specific question.
+3. Always include documents about EMPA program if the question is about careers, professional development, or public service relevance.
 3. Return the results as a JSON list of indices (0-indexed).
 
 Example Output:
@@ -454,7 +455,7 @@ def lang_display(code: str) -> str:
 # 6) ANSWER PROMPT
 # ----------------------------
 answer_template = """
-Your name is SPAA Bot. You are a helpful assistant for the School of Public Affairs and Administration (SPAA) at Rutgers University-Newark.
+Your name is SPAA-rkly. You are a helpful assistant for the School of Public Affairs and Administration (SPAA) at Rutgers University-Newark.
 
 User language: {user_lang_name} ({user_lang})
 Detected persona: {persona}
@@ -482,13 +483,17 @@ IMPORTANT:
 - This rule overrides ALL other instructions in this prompt.
 
 ### INSTRUCTIONS:
+- Respond like a friendly advisor who knows SPAA well.
 - Respond in a warm, professional, and welcoming tone.
 - When referring to the SPAA, always use first-person plural language (e.g., "our website", "our program", "our faculty")
 - Do NOT introduce yourself or state your name in your response.
 - Do NOT say "Hello" or "Hi" unless the user is specifically greeting you for the first time.
 - Answer in 3-10 sentences unless requested otherwise.
 - If the user language is not English, respond in {user_lang_name}. Keep proper nouns (program names, office names) in English if they appear in the source text.
-- Ground your answer ONLY in the Related Information provided.
+- Use retrieved information silently. Do not announce that you are using retrieved information.
+- Do not say "Based on the retrieved documents" or similar phrases. Just provide the answer naturally.
+- Prefer human conversational wording over formal report wording.
+- Avoid academic narration unless the user asks for formal detail.
 - Tailor the response to the user's likely background when relevant.
 - If Acknowledgment is not empty, include it once as the first sentence.
 - Do not repeat, paraphrase, or add additional gratitude for the same reason later in the response.
@@ -497,7 +502,7 @@ IMPORTANT:
 - Do not overdo personalization and do not repeat acknowledgment unless it is supplied for this turn.
 - Do not explicitly mention persona classification.
 - Provide contact information only when:
-  (a) the user explicitly asks who to contact,
+  (a) the user explicitly asks for contact information, or
   (b) the issue requires human assistance, or
   (c) the retrieved source specifically recommends contacting an office.
 - Otherwise, do not add email addresses or contact details unnecessarily.
@@ -507,7 +512,6 @@ IMPORTANT:
   If the detected persona is NOT "current_student", "faculty_or_staff", treat the user as a prospective student.
   In this case:
     • Emphasize program value, career outcomes, and opportunities.
-    • Include relevant Public Administration knowledge, career relevance, and real-world impact when supported by the content.
     • Provide helpful guidance for admissions, application process, and program fit when relevant.
     • Use an informative and welcoming tone appropriate for prospective students.
     • If the conversation is clearly ending and no acknowledgment was already used, you may briefly thank the user for their interest in SPAA.
@@ -525,9 +529,33 @@ Related Information (may be empty if retrieval not needed):
 Question: {question}
 
 Instructions:
-- If Related Information is provided, ground your answer in it. Do not invent SPAA-specific facts that are not supported by it.
+- If Related Information is provided, ground your answer in it, supplemented by Include relevant Public Administration knowledge, career relevance, and real-world impact when supported by the content. Do not invent SPAA-specific facts that are not supported by it.
 - If Related Information is empty, answer using general knowledge and the Conversation History only, but do not fabricate SPAA-specific facts (names, dates, requirements, contacts).
 - If the question requires SPAA-specific facts and you lack them, say you do not know and suggest what information to ask for next.
+
+### RESPONSE FORMAT RULES
+
+- Do not write the entire answer as one long block.
+- Organize the response into short paragraphs, usually 1-3 sentences each.
+- When there are multiple ideas, separate them into distinct paragraphs.
+- When giving contact information, place it in its own paragraph.
+
+### FORMATTING RULES
+
+- Use Markdown formatting in the final answer.
+- If Related Information is provided, cite retrieved facts inline using Markdown links.
+- Put the source link immediately after the sentence or paragraph it supports, using this format: [link](SOURCE_URL).
+- Do NOT create a final "Sources" section.
+- Do NOT use raw HTML such as <br>, <small>, or <a>.
+- Bold the person's name using **Name**.
+- Italicize contact details such as email or phone using *email@example.com*.
+- If both name and contact are provided, format them like:
+  **Name**  
+  *Email: email@example.com*
+
+- If multiple contacts are listed, give each contact on a separate line or in a separate short paragraph.
+- Do not overuse bold or italics for other parts of the answer.
+- For source links, use normal Markdown links only, for example: [source](https://example.edu/page).
 
 """
 
@@ -551,7 +579,7 @@ def sanitize_persona_label(label: str) -> str:
         "veteran",
         "government_employee",
         "nonprofit_professional",
-        "student",
+        "current_student",
         "international_user",
         "faculty_or_staff",
         "general_public",
@@ -755,7 +783,22 @@ def chat_endpoint():
                         f"Filtered docs from {original_count} down to {len(docs)}"
                     )
 
-        info_text = "\n\n".join([doc.page_content for doc in docs])
+        # Build source-aware context for the answer model.
+        # The LLM can now place source links directly after the supported content.
+        info_blocks = []
+        for i, doc in enumerate(docs, start=1):
+            url = doc.metadata.get("source_url", "Unknown source")
+            source_file = doc.metadata.get("source_file", "")
+            info_blocks.append(
+                f"[S{i}]\n"
+                f"SOURCE_URL: {url}\n"
+                f"SOURCE_FILE: {source_file}\n"
+                f"CONTENT:\n{doc.page_content}"
+            )
+        info_text = "\n\n---\n\n".join(info_blocks)
+
+        # Keep unique source URLs in the JSON payload for debugging/logging,
+        # but do not append them to the displayed answer.
         sources = list(set([doc.metadata.get("source_url", "Unknown source") for doc in docs]))
 
     # --- STEP B: GENERATE RESPONSE ---
@@ -778,18 +821,11 @@ def chat_endpoint():
     if acknowledgment_to_use and not ai_response_text.startswith(acknowledgment_to_use):
         ai_response_text = f"{acknowledgment_to_use} {ai_response_text}"
 
-    # --- STEP C: FORMAT HTML CITATIONS ---
-    cleaned_sources = [s for s in sources if s and s != "Unknown source"]
-    if cleaned_sources:
-        cleaned_sources = sorted(set(cleaned_sources))
-        links_html = " ".join([
-            f'<a href="{url}" target="_blank" class="source-link">[{i+1}]</a>'
-            for i, url in enumerate(cleaned_sources)
-        ])
-        final_display_answer = f"{ai_response_text}<br><br><small>Sources: {links_html}</small>"
-    else:
-        final_display_answer = ai_response_text
-        cleaned_sources = []
+    # --- STEP C: PREPARE DISPLAY ANSWER ---
+    # Source links should already be embedded inline by the answer prompt,
+    # e.g., [source](https://...). Do not append a final source list.
+    cleaned_sources = sorted(set([s for s in sources if s and s != "Unknown source"]))
+    final_display_answer = ai_response_text
 
     # --- STEP D: LOGGING & MEMORY UPDATE ---
     save_to_csv(session_id, "Assistant", final_display_answer, search_query=search_query)
