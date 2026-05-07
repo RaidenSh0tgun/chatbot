@@ -69,7 +69,7 @@ vector_db = Chroma(
 )
 
 retriever = vector_db.as_retriever(
-    search_kwargs={"k": 15}
+    search_kwargs={"k": 8}
 )
 
 
@@ -176,157 +176,54 @@ def parse_router_json(text) -> dict:
 # ----------------------------
 # 5.1) POST-RETRIEVAL FILTER PROMPT
 # ----------------------------
-filter_template = """
-You are a Document Relevance Filter for Rutgers SPAA.
-
-User language: {user_lang_name} ({user_lang})
-
-User Question: {question}
-Conversation History: {context}
-
-Retrieved Documents:
-{docs_content}
-
-Task:
-1. Review each document above.
-2. Select ONLY the documents that are factually relevant to the user's specific question.
-3. Always include documents about EMPA program if the question is about careers, professional development, or public service relevance.
-3. Return the results as a JSON list of indices (0-indexed).
-
-Example Output:
-{{ "selected_indices": [0, 2] }}
-
-Return ONLY JSON.
-JSON:
-"""
-
-filter_prompt = ChatPromptTemplate.from_template(filter_template)
-filter_chain = filter_prompt | model
-
-
-def parse_filter_json(text) -> list:
-    """
-    Extract the list of selected indices from the LLM output.
-    """
-    if not isinstance(text, str):
-        text = str(text)
-
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            selected = obj.get("selected_indices", [])
-            if isinstance(selected, list):
-                return selected
-    except Exception:
-        pass
-
-    try:
-        m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if m:
-            obj = json.loads(m.group(0))
-            selected = obj.get("selected_indices", [])
-            if isinstance(selected, list):
-                return selected
-    except Exception:
-        pass
-
-    return []
+#removed for accelerating response time. Can be added back if needed for better relevance.
 
 
 # ----------------------------
 # 5.2) PERSONA DETECTION PROMPT
 # ----------------------------
-persona_template = """
-You are a persona detection module for a Rutgers SPAA chatbot.
+#integrated with language detection for efficiency.
 
-User language: {user_lang_name} ({user_lang})
 
-Conversation History (most recent last):
+# ----------------------------
+# 5.3) LANGUAGE DETECTION PROMPT
+# ----------------------------
+analysis_template = """
+You are an analysis module for a Rutgers SPAA chatbot.
+
+Conversation History:
 {context}
 
 Current User Question:
 {question}
 
 Task:
-Identify whether the user explicitly states or strongly indicates a service-relevant background or current occupation.
+1. Detect the main language of the user's question.
+2. Detect the user's persona/background if clearly indicated.
+3. Decide whether a brief acknowledgment is appropriate.
 
-Choose exactly one persona from:
-- law_enforcement
-- veteran
-- government_employee
-- nonprofit_professional
-- current_student
-- international_user
-- faculty_or_staff
-- general_public
-- unknown
+Allowed language codes:
+en, es, fr, de, it, pt, zh, zh-cn, zh-tw, ja, ko, ru, ar, hi
 
-Also decide whether a brief acknowledgment should be used in the assistant response.
-
-Rules:
-- Use law_enforcement only if the user explicitly says they work in policing, corrections, public safety, law enforcement, or similar.
-- Use veteran only if the user explicitly says they are a veteran, former military member, or similar.
-- Use government_employee only if the user clearly indicates they work for government, public administration, or a public agency.
-- Use nonprofit_professional only if the user clearly indicates they work for, manage, or lead a nonprofit or NGO.
-- Use current_student if the user clearly indicates they are a current student.
-- Use international_user if the user clearly indicates international admissions, visa, I-20, or related international student identity or needs.
-- Use faculty_or_staff if the user clearly indicates they are an instructor, professor, administrator, or university staff member.
-- Use general_public for broad public questions with no meaningful role signal.
-- Use unknown when evidence is weak or ambiguous.
-- Only recommend acknowledgment when it is clearly appropriate and natural.
-- Do not infer sensitive or personal identity traits beyond what the user states.
+Allowed personas:
+law_enforcement, veteran, government_employee, nonprofit_professional,
+current_student, international_user, faculty_or_staff, general_public, unknown
 
 Return ONLY valid JSON with exactly these keys:
+- language: string
+- language_confidence: number
 - persona: string
-- confidence: number
+- persona_confidence: number
 - use_acknowledgment: true/false
 - acknowledgment: string
 - reason: string
 
-Rules:
-- confidence must be between 0 and 1
-- if use_acknowledgment is false, acknowledgment must be ""
-- no extra text
-
 JSON:
 """
 
-persona_prompt = ChatPromptTemplate.from_template(persona_template)
-persona_chain = persona_prompt | model
+analysis_prompt = ChatPromptTemplate.from_template(analysis_template)
+analysis_chain = analysis_prompt | model
 
-
-def parse_persona_json(text) -> dict:
-    if not isinstance(text, str):
-        text = str(text)
-
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
-
-    m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-    if m:
-        try:
-            obj = json.loads(m.group(0))
-            if isinstance(obj, dict):
-                return obj
-        except Exception:
-            pass
-
-    return {
-        "persona": "unknown",
-        "confidence": 0.0,
-        "use_acknowledgment": False,
-        "acknowledgment": "",
-        "reason": "Persona output not parseable."
-    }
-
-
-# ----------------------------
-# 5.3) LANGUAGE DETECTION PROMPT
-# ----------------------------
 LANG_NAME = {
     "en": "English",
     "es": "Spanish",
@@ -344,38 +241,18 @@ LANG_NAME = {
     "hi": "Hindi"
 }
 
-language_template = """
-You are a language detection module.
 
-Task:
-Detect the main language of the user's text.
-
-Return ONLY valid JSON with exactly these keys:
-- language: string
-- confidence: number
-- reason: string
-
-Allowed language codes:
-en, es, fr, de, it, pt, zh, zh-cn, zh-tw, ja, ko, ru, ar, hi
-
-Rules:
-- Choose the main language only.
-- If the text is mixed but mostly one language, return the dominant one.
-- If uncertain, return "en".
-- confidence must be between 0 and 1.
-- No extra text.
-
-User text:
-{text}
-
-JSON:
-"""
-
-language_prompt = ChatPromptTemplate.from_template(language_template)
-language_chain = language_prompt | model
+def normalize_lang(code: str) -> str:
+    if not code:
+        return "en"
+    code = code.lower().strip()
+    return code if code in LANG_NAME else "en"
 
 
-def parse_language_json(text) -> dict:
+def lang_display(code: str) -> str:
+    return LANG_NAME.get(code, code)
+
+def parse_analysis_json(text) -> dict:
     if not isinstance(text, str):
         text = str(text)
 
@@ -397,59 +274,13 @@ def parse_language_json(text) -> dict:
 
     return {
         "language": "en",
-        "confidence": 0.0,
-        "reason": "Language output not parseable."
+        "language_confidence": 0.0,
+        "persona": "unknown",
+        "persona_confidence": 0.0,
+        "use_acknowledgment": False,
+        "acknowledgment": "",
+        "reason": "Analysis output not parseable."
     }
-
-
-def normalize_lang(code: str) -> str:
-    if not code:
-        return "en"
-    code = code.lower().strip()
-    return code if code in LANG_NAME else "en"
-
-
-def detect_user_language_llm(text: str) -> tuple[str, float, str]:
-    """
-    Use the LLM to detect language.
-    Returns: (language_code, confidence, reason)
-    """
-    t = (text or "").strip()
-    if not t:
-        return "en", 0.0, "Empty input."
-
-    try:
-        raw = language_chain.invoke({"text": t})
-        result = parse_language_json(raw)
-        code = normalize_lang(result.get("language", "en"))
-        confidence = safe_float(result.get("confidence"), 0.0)
-        reason = (result.get("reason") or "").strip()
-        return code, confidence, reason
-    except Exception as e:
-        return "en", 0.0, f"Language detection failed: {repr(e)}"
-
-
-def detect_user_language(text: str) -> tuple[str, float, str]:
-    """
-    Hybrid approach:
-    - Fast shortcut for obvious Chinese text
-    - Otherwise use the LLM
-    Returns: (language_code, confidence, reason)
-    """
-    t = (text or "").strip()
-    if not t:
-        return "en", 0.0, "Empty input."
-
-    cjk = sum(1 for ch in t if '\u4e00' <= ch <= '\u9fff')
-    if cjk >= 2:
-        return "zh", 0.99, "Detected multiple CJK characters."
-
-    return detect_user_language_llm(t)
-
-
-def lang_display(code: str) -> str:
-    return LANG_NAME.get(code, code)
-
 
 # ----------------------------
 # 6) ANSWER PROMPT
@@ -501,12 +332,6 @@ IMPORTANT:
 - Assume the full name "School of Public Affairs and Administration (SPAA)" has already been introduced; always use "SPAA" only in all responses.
 - Do not overdo personalization and do not repeat acknowledgment unless it is supplied for this turn.
 - Do not explicitly mention persona classification.
-- Provide contact information only when:
-  (a) the user explicitly asks for contact information, or
-  (b) the issue requires human assistance, or
-  (c) the retrieved source specifically recommends contacting an office.
-- Otherwise, do not add email addresses or contact details unnecessarily.
-- When contact info is needed, prefer spaa.sas@newark.rutgers.edu unless a more specific verified contact is available.
 
 - Default user framing:
   If the detected persona is NOT "current_student", "faculty_or_staff", treat the user as a prospective student.
@@ -528,8 +353,11 @@ Related Information (may be empty if retrieval not needed):
 
 Question: {question}
 
-Instructions:
-- If Related Information is provided, ground your answer in it, supplemented by Include relevant Public Administration knowledge, career relevance, and real-world impact when supported by the content. Do not invent SPAA-specific facts that are not supported by it.
+- If Related Information is provided, first review all retrieved documents and identify which ones directly answer the user's question.
+- Use only the relevant retrieved documents as references, and ignore documents that are unrelated, weakly related, outdated, duplicated, or only generally about the topic.
+- Ground SPAA-specific facts only in the relevant retrieved content. Do not invent SPAA-specific names, dates, requirements, policies, contacts, or URLs.
+- You may supplement the answer with general Public Administration knowledge, career relevance, and real-world impact only when it is clearly consistent with the retrieved content.
+- When citing retrieved facts, cite only the documents actually used to support the answer.
 - If Related Information is empty, answer using general knowledge and the Conversation History only, but do not fabricate SPAA-specific facts (names, dates, requirements, contacts).
 - If the question requires SPAA-specific facts and you lack them, say you do not know and suggest what information to ask for next.
 
@@ -537,6 +365,7 @@ Instructions:
 
 - Do not write the entire answer as one long block.
 - Organize the response into short paragraphs, usually 1-3 sentences each.
+- Keep a warm, professional, and welcoming tone.
 - When there are multiple ideas, separate them into distinct paragraphs.
 - When giving contact information, place it in its own paragraph.
 
@@ -550,7 +379,8 @@ Instructions:
 - Bold the person's name using **Name**.
 - Italicize contact details such as email or phone using *email@example.com*.
 - If both name and contact are provided, format them like:
-  **Name**  
+  **Name**
+  Title (if available)
   *Email: email@example.com*
 
 - If multiple contacts are listed, give each contact on a separate line or in a separate short paragraph.
@@ -638,43 +468,35 @@ def chat_endpoint():
     # Prepare history
     history_string = "\n".join(conversation_memory[session_id]).strip()
 
-    # --- STEP A0: LANGUAGE DETECTION ---
-    user_lang, user_lang_confidence, language_reason = detect_user_language(question)
-    user_lang_name = lang_display(user_lang)
-
-    save_to_csv(
-        session_id,
-        "Language",
-        f"language={user_lang}; confidence={user_lang_confidence}; reason={language_reason}",
-        search_query=""
-    )
-
-    # --- STEP A1: PERSONA DETECTION ---
+    # --- STEP A0: LANGUAGE + PERSONA ANALYSIS ---
     previous_persona = persona_memory.get(session_id, {
-        "persona": "unknown",
-        "confidence": 0.0,
-        "use_acknowledgment": False,
-        "acknowledgment": ""
+    "persona": "unknown",
+    "confidence": 0.0,
+    "use_acknowledgment": False,
+    "acknowledgment": ""
     })
 
-    persona_raw = persona_chain.invoke({
+    analysis_raw = analysis_chain.invoke({
         "context": history_string,
-        "question": question,
-        "user_lang": user_lang,
-        "user_lang_name": user_lang_name
+        "question": question
     })
 
-    persona_result = parse_persona_json(persona_raw)
+    analysis_result = parse_analysis_json(analysis_raw)
 
-    detected_persona = sanitize_persona_label(persona_result.get("persona"))
-    persona_confidence = safe_float(persona_result.get("confidence"), 0.0)
-    use_acknowledgment = bool(persona_result.get("use_acknowledgment", False))
+    user_lang = normalize_lang(analysis_result.get("language", "en"))
+    user_lang_confidence = safe_float(analysis_result.get("language_confidence"), 0.0)
+    user_lang_name = lang_display(user_lang)
+    language_reason = (analysis_result.get("reason") or "").strip()
+
+    detected_persona = sanitize_persona_label(analysis_result.get("persona"))
+    persona_confidence = safe_float(analysis_result.get("persona_confidence"), 0.0)
+    use_acknowledgment = bool(analysis_result.get("use_acknowledgment", False))
     acknowledgment = sanitize_acknowledgment(
         detected_persona,
         use_acknowledgment,
-        persona_result.get("acknowledgment", "")
+        analysis_result.get("acknowledgment", "")
     )
-    persona_reason = (persona_result.get("reason") or "").strip()
+    persona_reason = (analysis_result.get("reason") or "").strip()
 
     # Stabilize persona so the role does not flip too easily across the session
     if previous_persona["persona"] != "unknown" and persona_confidence < 0.65:
@@ -684,14 +506,12 @@ def chat_endpoint():
         acknowledgment = previous_persona["acknowledgment"]
         persona_reason = f"Kept previous persona due to low confidence. {persona_reason}"
 
-    # Only use acknowledgment when persona is newly detected with strong confidence
     first_time_ack = (
         previous_persona["persona"] == "unknown"
         and detected_persona != "unknown"
         and persona_confidence >= 0.80
     )
 
-    # Also allow acknowledgment if persona has just changed to a new high-confidence role
     changed_persona_ack = (
         previous_persona["persona"] != detected_persona
         and previous_persona["persona"] != "unknown"
@@ -712,8 +532,10 @@ def chat_endpoint():
 
     save_to_csv(
         session_id,
-        "Persona",
-        f"persona={detected_persona}; confidence={persona_confidence}; ack={acknowledgment_to_use}; reason={persona_reason}",
+        "Analysis",
+        f"language={user_lang}; language_confidence={user_lang_confidence}; "
+        f"persona={detected_persona}; persona_confidence={persona_confidence}; "
+        f"ack={acknowledgment_to_use}; reason={analysis_result.get('reason', '')}",
         search_query=""
     )
 
@@ -753,35 +575,7 @@ def chat_endpoint():
             save_to_csv(session_id, "System", f"Retriever error: {repr(e)}")
 
         # --- STEP A4: POST-RETRIEVAL FILTERING ---
-        if docs:
-            docs_content_for_filter = ""
-            for i, d in enumerate(docs):
-                docs_content_for_filter += (
-                    f"[{i}] SOURCE_URL: {d.metadata.get('source_url')}\n"
-                    f"SOURCE_FILE: {d.metadata.get('source_file')}\n"
-                    f"CONTENT: {d.page_content}\n---\n"
-                )
-
-            filter_raw = filter_chain.invoke({
-                "question": question,
-                "context": history_string,
-                "docs_content": docs_content_for_filter,
-                "user_lang": user_lang,
-                "user_lang_name": user_lang_name
-            })
-
-            selected_indices = parse_filter_json(filter_raw)
-
-            if selected_indices:
-                filtered_docs = [docs[i] for i in selected_indices if isinstance(i, int) and 0 <= i < len(docs)]
-                if filtered_docs:
-                    original_count = len(docs)
-                    docs = filtered_docs
-                    save_to_csv(
-                        session_id,
-                        "System",
-                        f"Filtered docs from {original_count} down to {len(docs)}"
-                    )
+        #removed for accelerating response time. Can be added back if needed for better relevance.
 
         # Build source-aware context for the answer model.
         # The LLM can now place source links directly after the supported content.

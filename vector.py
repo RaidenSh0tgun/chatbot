@@ -13,7 +13,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # ------------------------
 # SETTINGS
 # ------------------------
-DATA_DIR = "./Data"          # folder containing rutgers_spaa_data.json, rutgers_oiss_data.json, etc.
+DATA_DIR = "./Data"
+CONSOLIDATED_JSON = "./Data/consolidated_rag_data.json"      # folder containing rutgers_spaa_data.json, rutgers_oiss_data.json, etc.
 DB_PATH = "./chroma_db"
 EMBED_MODEL = "nomic-embed-text"
 
@@ -25,8 +26,6 @@ SAFE_TEXT_CAP = 2000
 # If True: wipe DB and rebuild from scratch every time
 REBUILD_FROM_SCRATCH = False
 
-# Only load files that end with .json
-JSON_SUFFIX = ".json"
 
 
 # ------------------------
@@ -52,18 +51,31 @@ def load_records(json_path: str) -> List[Dict[str, Any]]:
     if not isinstance(data, list):
         raise ValueError(f"{json_path} must contain a JSON list of records.")
 
-    # Expect each item has 'url' and 'content'
     cleaned = []
-    for i, item in enumerate(data):
+
+    for item in data:
         if not isinstance(item, dict):
             continue
-        url = item.get("url")
-        content = item.get("content")
-        if isinstance(url, str) and isinstance(content, str) and content.strip():
-            cleaned.append({"url": url.strip(), "content": content.strip()})
+
+        url = item.get("url", "")
+        title = item.get("title", "")
+        keyword = item.get("keyword", [])
+        content = item.get("content", "")
+
+        if isinstance(keyword, list):
+            keyword_text = ", ".join(str(k).strip() for k in keyword if str(k).strip())
         else:
-            # You can print/debug problematic items here if needed
-            pass
+            keyword_text = str(keyword).strip()
+
+        if isinstance(content, str) and content.strip():
+            cleaned.append({
+                "url": str(url).strip(),
+                "title": str(title).strip(),
+                "keyword": keyword,
+                "keyword_text": keyword_text,
+                "content": content.strip()
+            })
+
     return cleaned
 
 def build_documents_from_records(
@@ -79,13 +91,26 @@ def build_documents_from_records(
     ids: List[str] = []
 
     for rec in records:
-        url = rec["url"]
-        content = rec["content"]
+        url = rec.get("url", "")
+        title = rec.get("title", "")
+        keyword = rec.get("keyword", [])
+        keyword_text = rec.get("keyword_text", "")
+        content = rec.get("content", "")
+
+        indexed_text = f"""
+            Title: {title}
+            Keywords: {keyword_text}
+            URL: {url}
+
+            Content:
+            {content}
+            """.strip()
 
         # Create a record-level hash, then chunk-level hash
-        record_fp = stable_hash(url + "\n" + content)
+        record_fp = stable_hash(url + "\n" + title + "\n" + keyword_text + "\n" + content)
 
-        chunks = splitter.split_text(content)
+        chunks = splitter.split_text(indexed_text)
+
         for chunk_idx, chunk in enumerate(chunks):
             safe_text = chunk[:SAFE_TEXT_CAP]
 
@@ -95,6 +120,8 @@ def build_documents_from_records(
 
             metadata = {
                 "source_url": url,
+                "title": title,
+                "keyword": keyword_text,
                 "source_file": os.path.basename(source_file),
                 "record_fp": record_fp,
                 "chunk_idx": chunk_idx,
@@ -109,6 +136,7 @@ def build_documents_from_records(
 # ------------------------
 # MAIN
 # ------------------------
+
 def create_or_update_database():
     # Optional rebuild
     if REBUILD_FROM_SCRATCH and os.path.exists(DB_PATH):
@@ -131,13 +159,8 @@ def create_or_update_database():
         separators=["\n\n", "\n", " ", ""],
     )
 
-    json_files = list_json_files(DATA_DIR)
-    if not json_files:
-        print(f"No JSON files found in {DATA_DIR}")
-        return
-
+    json_files = [CONSOLIDATED_JSON]
     total_added = 0
-
     for jp in json_files:
         print(f"\nLoading: {jp}")
         records = load_records(jp)
