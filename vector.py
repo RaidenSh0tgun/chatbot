@@ -79,10 +79,10 @@ def load_records(json_path: str) -> List[Dict[str, Any]]:
     return cleaned
 
 def build_documents_from_records(
-    records: List[Dict[str, str]],
-    source_file: str,
-    splitter: RecursiveCharacterTextSplitter
-) -> Tuple[List[Document], List[str]]:
+        records: List[Dict[str, str]],
+        source_file: str,
+        splitter: RecursiveCharacterTextSplitter
+    ) -> Tuple[List[Document], List[str]]:
     """
     Returns (documents, ids).
     ids are stable so we can upsert incrementally.
@@ -97,14 +97,7 @@ def build_documents_from_records(
         keyword_text = rec.get("keyword_text", "")
         content = rec.get("content", "")
 
-        indexed_text = f"""
-            Title: {title}
-            Keywords: {keyword_text}
-            URL: {url}
-
-            Content:
-            {content}
-            """.strip()
+        indexed_text = content.strip()
 
         # Create a record-level hash, then chunk-level hash
         record_fp = stable_hash(url + "\n" + title + "\n" + keyword_text + "\n" + content)

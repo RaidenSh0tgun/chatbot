@@ -197,8 +197,27 @@
         sendBtn.disabled = true;
 
         // Add placeholder "thinking" message
-        const thinkingMsg = appendMessage('Spaarkly is typing...', 'bot');
+        const thinkingMsg = appendMessage('Spaarkly is thinking...', 'bot');
         thinkingMsg.classList.add('thinking');
+
+        // Progressive loading messages
+        const loadingStages = [
+            { delay: 8000, text: 'Spaarkly is gathering information...' },
+            { delay: 16000, text: 'Spaarkly is typing...' }
+        ];
+
+        const loadingTimers = [];
+
+        loadingStages.forEach(stage => {
+            const timer = setTimeout(() => {
+                // Only update if still waiting for response
+                if (thinkingMsg.classList.contains('thinking')) {
+                    thinkingMsg.textContent = stage.text;
+                }
+            }, stage.delay);
+
+            loadingTimers.push(timer);
+        });
 
         try {
             const response = await fetch(API_ENDPOINT, {

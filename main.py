@@ -22,6 +22,7 @@ import json
 import re
 import random
 from datetime import datetime
+from difflib import SequenceMatcher
 
 
 # ----------------------------
@@ -29,9 +30,10 @@ from datetime import datetime
 # ----------------------------
 os.makedirs("conversation", exist_ok=True)
 
+date = datetime.now().strftime("%Y-%m-%d")
 
 def save_to_csv(session_id: str, sender: str, message: str, search_query: str = "") -> None:
-    filename = f"conversation/{session_id}.csv"
+    filename = f"conversation/{session_id}_{date}.csv"
     file_exists = os.path.isfile(filename)
 
     with open(filename, "a", newline="", encoding="utf-8-sig") as csvfile:
@@ -69,7 +71,7 @@ vector_db = Chroma(
 )
 
 retriever = vector_db.as_retriever(
-    search_kwargs={"k": 8}
+    search_kwargs={"k": 20}
 )
 
 
@@ -98,6 +100,8 @@ Use retrieval when:
 - The user asks for school-specific facts (phd, mpa, undergraduate, people, programs, admissions, deadlines, tuition/fees, offices, contacts, policies, forms, procedures, locations, courses, classes).
 - The user refers to something likely in school webpages or internal documents.
 - The user asks for URLs, official details, step-by-step instructions, or factual claims about the school.
+- The user asks a follow-up question about previously mentioned SPAA-specific information.
+- The user asks to confirm, update, expand, correct, or provide details about a previous answer.
 
 Persona guidance:
 - veteran: prioritize veteran benefits, military-connected student support, funding, transition support, and relevant offices if supported by the school content.
@@ -112,7 +116,11 @@ Persona guidance:
 Important:
 - The vector database content is primarily in English.
 - If the user language is not English, translate the search query into concise English keywords for best retrieval.
-- Do not overuse persona. Use it only to improve relevance.
+- Do not overuse persona. Use it only when relevant to the question.
+- Conversation history is useful for context, but it should NOT replace retrieval for SPAA-specific facts.
+- If the user asks about people, titles, contacts, programs, requirements, deadlines, offices, policies, tuition, admissions, forms, or procedures, use_retrieval must be true even if similar information appeared earlier in the conversation.
+- Do not set use_retrieval=false only because the information was mentioned in a previous response.
+- Use conversation history to understand follow-up references, but retrieve again to verify current official information.
 
 Conversation History (most recent last):
 {context}
@@ -127,8 +135,19 @@ Return ONLY valid JSON with exactly these keys:
 
 Rules:
 - If use_retrieval is false, set search_query to "".
-- If use_retrieval is true, search_query MUST be short, high-signal English keywords (not a full paragraph).
+- If use_retrieval is true, search_query MUST be 5-10 English Keywords.
 - Do not include any keys beyond the three keys above.
+
+search_query Keywords requirements:
+- MUST be short, high-signal English keywords or phrases.
+- Prioritize distinctive entities, programs, services, procedures, names, offices, forms, policies, technologies, or acronyms.
+- Include exact official names when important for retrieval.
+- Avoid generic institutional words unless essential for meaning.
+
+DO NOT use overly broad or low-information keywords such as:
+"SPAA", "Rutgers", "University", "school", 
+
+Only include these generic terms if they are necessary to distinguish the topic.
 
 JSON:
 """
@@ -288,10 +307,10 @@ def parse_analysis_json(text) -> dict:
 answer_template = """
 Your name is SPAA-rkly. You are a helpful assistant for the School of Public Affairs and Administration (SPAA) at Rutgers University-Newark.
 
-User language: {user_lang_name} ({user_lang})
-Detected persona: {persona}
-Persona confidence: {persona_confidence}
-Acknowledgment: {acknowledgment_to_use}
+User language: {user_lang_name} ({user_lang}).
+Detected persona: {persona}.
+Persona confidence: {persona_confidence}.
+Acknowledgment: {acknowledgment_to_use}.
 
 ### SAFETY OVERRIDE (HIGHEST PRIORITY)
 
@@ -319,16 +338,13 @@ IMPORTANT:
 - When referring to the SPAA, always use first-person plural language (e.g., "our website", "our program", "our faculty")
 - Do NOT introduce yourself or state your name in your response.
 - Do NOT say "Hello" or "Hi" unless the user is specifically greeting you for the first time.
-- Answer in 3-10 sentences unless requested otherwise.
 - If the user language is not English, respond in {user_lang_name}. Keep proper nouns (program names, office names) in English if they appear in the source text.
 - Use retrieved information silently. Do not announce that you are using retrieved information.
-- Do not say "Based on the retrieved documents" or similar phrases. Just provide the answer naturally.
+- Do not say "Based on the retrieved documents", "based on the information", or similar phrases. Just provide the answer naturally.
 - Prefer human conversational wording over formal report wording.
-- Avoid academic narration unless the user asks for formal detail.
 - Tailor the response to the user's likely background when relevant.
-- If Acknowledgment is not empty, include it once as the first sentence.
+- If Acknowledgment is not empty, include it once as the first sentence. Avoid adding another generic thank-you sentence unless clearly needed for a separate purpose.
 - Do not repeat, paraphrase, or add additional gratitude for the same reason later in the response.
-- If acknowledgment is used, avoid adding another generic thank-you sentence unless clearly needed for a separate purpose.
 - Assume the full name "School of Public Affairs and Administration (SPAA)" has already been introduced; always use "SPAA" only in all responses.
 - Do not overdo personalization and do not repeat acknowledgment unless it is supplied for this turn.
 - Do not explicitly mention persona classification.
@@ -348,10 +364,10 @@ IMPORTANT:
 Conversation History:
 {context}
 
+Question: {question}
+
 Related Information (may be empty if retrieval not needed):
 {info}
-
-Question: {question}
 
 - If Related Information is provided, first review all retrieved documents and identify which ones directly answer the user's question.
 - Use only the relevant retrieved documents as references, and ignore documents that are unrelated, weakly related, outdated, duplicated, or only generally about the topic.
@@ -359,13 +375,18 @@ Question: {question}
 - You may supplement the answer with general Public Administration knowledge, career relevance, and real-world impact only when it is clearly consistent with the retrieved content.
 - When citing retrieved facts, cite only the documents actually used to support the answer.
 - If Related Information is empty, answer using general knowledge and the Conversation History only, but do not fabricate SPAA-specific facts (names, dates, requirements, contacts).
-- If the question requires SPAA-specific facts and you lack them, say you do not know and suggest what information to ask for next.
+- If the question requires SPAA-specific facts and you lack them, say 'I don't know' and suggest what information to ask for next.
 
-### RESPONSE FORMAT RULES
+Privacy rule:
+- Do not disclose, infer, or speculate about alumni identities, employment, contact information, locations, salaries, or career outcomes unless explicitly provided in official retrieved content.
+- If asked about a specific alumnus/alumna, politely state that you cannot provide personal alumni information.
+- You may discuss aggregate alumni outcomes, representative employers, or publicly published success stories only when supported by retrieved official content.
+
+### RESPONSE RULES
 
 - Do not write the entire answer as one long block.
-- Organize the response into short paragraphs, usually 1-3 sentences each.
-- Keep a warm, professional, and welcoming tone.
+- Organize the response into paragraphs, usually 1-5 sentences each.
+- Keep a warm and welcoming tone.
 - When there are multiple ideas, separate them into distinct paragraphs.
 - When giving contact information, place it in its own paragraph.
 
@@ -376,16 +397,15 @@ Question: {question}
 - Put the source link immediately after the sentence or paragraph it supports, using this format: [link](SOURCE_URL).
 - Do NOT create a final "Sources" section.
 - Do NOT use raw HTML such as <br>, <small>, or <a>.
-- Bold the person's name using **Name**.
+- Bold the person's name using **Name**. Bold the person's title using **Title**.
 - Italicize contact details such as email or phone using *email@example.com*.
 - If both name and contact are provided, format them like:
   **Name**
-  Title (if available)
+  **Title**
   *Email: email@example.com*
 
 - If multiple contacts are listed, give each contact on a separate line or in a separate short paragraph.
 - Do not overuse bold or italics for other parts of the answer.
-- For source links, use normal Markdown links only, for example: [source](https://example.edu/page).
 
 """
 
@@ -464,6 +484,48 @@ def chat_endpoint():
 
     # Save user input
     save_to_csv(session_id, "User", question, search_query="")
+
+    # save retrieval log
+    def save_retrieval_log(
+        session_id: str,
+        question: str,
+        search_query: str,
+        docs
+    ) -> None:
+
+        filename = f"conversation/{session_id}_{date}_retrieval.csv"
+        file_exists = os.path.isfile(filename)
+
+        with open(filename, "a", newline="", encoding="utf-8-sig") as csvfile:
+            writer = csv.writer(csvfile, quoting=csv.QUOTE_ALL)
+
+            if not file_exists:
+                writer.writerow([
+                    "timestamp",
+                    "session_id",
+                    "question",
+                    "search_query",
+                    "rank",
+                    "source_url",
+                    "chunk_preview"
+                ])
+
+            for idx, doc in enumerate(docs, start=1):
+
+                source_url = doc.metadata.get("source_url", "")
+
+                # shorten chunk for CSV readability
+                preview = doc.page_content[:500].replace("\n", " ")
+
+                writer.writerow([
+                    datetime.now().isoformat(),
+                    session_id,
+                    question,
+                    search_query,
+                    idx,
+                    source_url,
+                    preview
+                ])
 
     # Prepare history
     history_string = "\n".join(conversation_memory[session_id]).strip()
@@ -563,6 +625,39 @@ def chat_endpoint():
     )
 
     # --- STEP A3: RETRIEVAL ---
+    def text_similarity(a: str, b: str) -> float:
+        a = (a or "").lower().strip()
+        b = (b or "").lower().strip()
+        if not a or not b:
+            return 0.0
+        return SequenceMatcher(None, a, b).ratio()
+
+
+    def metadata_similarity_score(doc, query: str) -> float:
+        title = doc.metadata.get("title", "")
+        keywords = doc.metadata.get("keyword", "")
+
+        title_score = text_similarity(query, title)
+        keyword_score = text_similarity(query, keywords)
+
+        # Give title more weight than keywords
+        return (title_score * 0.6) + (keyword_score * 0.4)
+    
+    def metadata_boost_score(doc, query: str) -> float:
+        q = query.lower()
+        title = doc.metadata.get("title", "").lower()
+        keywords = doc.metadata.get("keyword", "").lower()
+
+        score = metadata_similarity_score(doc, query)
+
+        for term in q.split():
+            if term in title:
+                score += 0.5
+            if term in keywords:
+                score += 0.3
+
+        return score
+
     docs = []
     info_text = ""
     sources = []
@@ -570,7 +665,25 @@ def chat_endpoint():
     if use_retrieval:
         effective_query = search_query if search_query else question
         try:
-            docs = retriever.invoke(effective_query)
+            candidate_docs = vector_db.similarity_search(effective_query, k=20)
+
+            reranked_docs = sorted(
+                enumerate(candidate_docs),
+                key=lambda item: (
+                    metadata_boost_score(item[1], effective_query)
+                    + (1 / (item[0] + 1)) * 0.3
+                ),
+                reverse=True
+            )
+
+            docs = [doc for _, doc in reranked_docs[:8]]
+            # NEW
+            save_retrieval_log(
+                session_id=session_id,
+                question=question,
+                search_query=effective_query,
+                docs=docs
+            )
         except Exception as e:
             save_to_csv(session_id, "System", f"Retriever error: {repr(e)}")
 
@@ -581,15 +694,16 @@ def chat_endpoint():
         # The LLM can now place source links directly after the supported content.
         info_blocks = []
         for i, doc in enumerate(docs, start=1):
-            url = doc.metadata.get("source_url", "Unknown source")
-            source_file = doc.metadata.get("source_file", "")
-            info_blocks.append(
-                f"[S{i}]\n"
-                f"SOURCE_URL: {url}\n"
-                f"SOURCE_FILE: {source_file}\n"
-                f"CONTENT:\n{doc.page_content}"
-            )
-        info_text = "\n\n---\n\n".join(info_blocks)
+                url = doc.metadata.get("source_url", "Unknown source")
+                title = doc.metadata.get("title", "")
+                content = doc.page_content.strip()
+                info_blocks.append(
+                    f"[S{i}]\n"
+                    f"TITLE: {title}\n"
+                    f"URL: {url}\n"
+                    f"CONTENT:\n{content}"
+                )
+        info_text = "\n\n======= DOCUMENT SEPARATOR =======\n\n".join(info_blocks)
 
         # Keep unique source URLs in the JSON payload for debugging/logging,
         # but do not append them to the displayed answer.

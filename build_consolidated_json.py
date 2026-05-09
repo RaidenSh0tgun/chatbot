@@ -61,11 +61,22 @@ def extract_json_from_response(response):
 
 def generate_metadata(content):
     prompt = f"""
-You are helping prepare a RAG database.
+You are helping prepare a RAG database for the School of Public Affairs and Administration (SPAA) at Rutgers University-Newark.
 
 Based on the content below, generate:
 1. A short and accurate title.
-2. 3 to 6 keywords for retrieval, MUST be short, high-signal English keywords.
+2. 3 to 10 keywords for retrieval.
+
+Keyword requirements:
+- MUST be short, high-signal English keywords or phrases.
+- Prioritize distinctive entities, programs, services, procedures, names, offices, forms, policies, technologies, or acronyms.
+- Include exact official names when important for retrieval.
+- Avoid generic institutional words unless essential for meaning.
+
+DO NOT use overly broad or low-information keywords such as:
+"SPAA", "Rutgers", "University", "school", 
+
+Only include these generic terms if they are necessary to distinguish the topic.
 
 Return ONLY valid JSON. Do not include markdown, explanation, or code fences.
 
@@ -76,7 +87,7 @@ Format:
 }}
 
 Content:
-{content[:3000]}
+{content[:5000]}
 """
 
     response = model.invoke(prompt)
