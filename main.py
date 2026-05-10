@@ -134,18 +134,10 @@ Return ONLY valid JSON with exactly these keys:
 - reason: string
 
 Rules:
-- If use_retrieval is false, set search_query to "".
-- If use_retrieval is true, search_query MUST be 5-10 English Keywords.
 - Do not include any keys beyond the three keys above.
-
-search_query Keywords requirements:
-- MUST be short, high-signal English keywords or phrases.
-- Prioritize distinctive entities, programs, services, procedures, names, offices, forms, policies, technologies, or acronyms.
-- Include exact official names when important for retrieval.
-- Avoid generic institutional words unless essential for meaning.
-
-DO NOT use overly broad or low-information keywords such as:
-"SPAA", "Rutgers", "University", "school", 
+- If use_retrieval is false, set search_query to "".
+- If use_retrieval is true, search_query MUST be a concise English retrieval phrase or a small set of high-signal phrases. Prefer exact names, role titles, program names, offices, forms, policies, procedures, and acronyms. Do not produce a generic keyword list.
+- DO NOT use overly broad or low-information words in search_query such as: "SPAA", "Rutgers", "University", "school". 
 
 Only include these generic terms if they are necessary to distinguish the topic.
 
@@ -377,10 +369,14 @@ Related Information (may be empty if retrieval not needed):
 - If Related Information is empty, answer using general knowledge and the Conversation History only, but do not fabricate SPAA-specific facts (names, dates, requirements, contacts).
 - If the question requires SPAA-specific facts and you lack them, say 'I don't know' and suggest what information to ask for next.
 
-Privacy rule:
-- Do not disclose, infer, or speculate about alumni identities, employment, contact information, locations, salaries, or career outcomes unless explicitly provided in official retrieved content.
-- If asked about a specific alumnus/alumna, politely state that you cannot provide personal alumni information.
+Privacy and Contact Rules:
+
+- If asked about a specific alumnus/alumna or student, politely state that you cannot provide personal alumni or student information unless it is publicly published in official SPAA content.
 - You may discuss aggregate alumni outcomes, representative employers, or publicly published success stories only when supported by retrieved official content.
+- Do NOT provide alumni or student names, emails, phone numbers, LinkedIn profiles, or other contact information unless the user explicitly requests contact information and the information is publicly listed in official retrieved content.
+- When answering general questions about programs, admissions, curriculum, careers, or student experience, do NOT volunteer alumni or student contact information unless directly relevant to the user's request.
+- If retrieved documents contain alumni or student contact information that is not necessary to answer the question, ignore it.
+- Prefer official SPAA office contacts, faculty contacts, or program contacts over individual student or alumni contacts unless the user explicitly asks for peer/student/alumni connections.
 
 ### RESPONSE RULES
 
@@ -625,36 +621,52 @@ def chat_endpoint():
     )
 
     # --- STEP A3: RETRIEVAL ---
-    def text_similarity(a: str, b: str) -> float:
-        a = (a or "").lower().strip()
-        b = (b or "").lower().strip()
-        if not a or not b:
+    def phrase_overlap_score(query: str, phrases: str) -> float:
+        query = (query or "").lower()
+        phrases = (phrases or "").lower()
+
+        if not query or not phrases:
             return 0.0
-        return SequenceMatcher(None, a, b).ratio()
+
+        score = 0.0
+
+        phrase_list = [
+            p.strip()
+            for p in re.split(r"\||,|;", phrases)
+            if p.strip()
+        ]
+
+        for phrase in phrase_list:
+            if phrase in query:
+                score += 2.0
+
+            phrase_terms = phrase.split()
+            matched_terms = sum(1 for term in phrase_terms if term in query)
+
+            if phrase_terms:
+                score += matched_terms / len(phrase_terms)
+
+        return score
 
 
-    def metadata_similarity_score(doc, query: str) -> float:
-        title = doc.metadata.get("title", "")
-        keywords = doc.metadata.get("keyword", "")
-
-        title_score = text_similarity(query, title)
-        keyword_score = text_similarity(query, keywords)
-
-        # Give title more weight than keywords
-        return (title_score * 0.6) + (keyword_score * 0.4)
-    
     def metadata_boost_score(doc, query: str) -> float:
-        q = query.lower()
-        title = doc.metadata.get("title", "").lower()
-        keywords = doc.metadata.get("keyword", "").lower()
+        q = (query or "").lower()
 
-        score = metadata_similarity_score(doc, query)
+        title = doc.metadata.get("title", "").lower()
+        retrieval_phrases = doc.metadata.get("retrieval_phrases", "").lower()
+
+        score = 0.0
+
+        # Strong title boost
+        if title and title in q:
+            score += 2.0
 
         for term in q.split():
             if term in title:
-                score += 0.5
-            if term in keywords:
-                score += 0.3
+                score += 0.4
+
+        # Retrieval phrase boost
+        score += phrase_overlap_score(q, retrieval_phrases) * 1.5
 
         return score
 
@@ -697,9 +709,12 @@ def chat_endpoint():
                 url = doc.metadata.get("source_url", "Unknown source")
                 title = doc.metadata.get("title", "")
                 content = doc.page_content.strip()
+                phrases = doc.metadata.get("retrieval_phrases", "")
+
                 info_blocks.append(
                     f"[S{i}]\n"
                     f"TITLE: {title}\n"
+                    f"RETRIEVAL_PHRASES: {phrases}\n"
                     f"URL: {url}\n"
                     f"CONTENT:\n{content}"
                 )

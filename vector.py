@@ -19,8 +19,8 @@ DB_PATH = "./chroma_db"
 EMBED_MODEL = "nomic-embed-text"
 
 # Chunking: keep these consistent after you start building the DB
-CHUNK_SIZE = 1200
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 1500
+CHUNK_OVERLAP = 250
 SAFE_TEXT_CAP = 2000
 
 # If True: wipe DB and rebuild from scratch every time
@@ -59,7 +59,7 @@ def load_records(json_path: str) -> List[Dict[str, Any]]:
 
         url = item.get("url", "")
         title = item.get("title", "")
-        keyword = item.get("keyword", [])
+        keyword = item.get("retrieval_phrases", [])
         content = item.get("content", "")
 
         if isinstance(keyword, list):
@@ -71,8 +71,8 @@ def load_records(json_path: str) -> List[Dict[str, Any]]:
             cleaned.append({
                 "url": str(url).strip(),
                 "title": str(title).strip(),
-                "keyword": keyword,
-                "keyword_text": keyword_text,
+                "retrieval_phrases": keyword,
+                "retrieval_phrases_text": keyword_text,
                 "content": content.strip()
             })
 
@@ -93,14 +93,14 @@ def build_documents_from_records(
     for rec in records:
         url = rec.get("url", "")
         title = rec.get("title", "")
-        keyword = rec.get("keyword", [])
-        keyword_text = rec.get("keyword_text", "")
+        retrieval_phrases = rec.get("retrieval_phrases", [])
+        retrieval_phrases_text = rec.get("retrieval_phrases_text", "")
         content = rec.get("content", "")
 
         indexed_text = content.strip()
 
         # Create a record-level hash, then chunk-level hash
-        record_fp = stable_hash(url + "\n" + title + "\n" + keyword_text + "\n" + content)
+        record_fp = stable_hash(url + "\n" + title + "\n" + retrieval_phrases_text + "\n" + content)
 
         chunks = splitter.split_text(indexed_text)
 
@@ -114,7 +114,7 @@ def build_documents_from_records(
             metadata = {
                 "source_url": url,
                 "title": title,
-                "keyword": keyword_text,
+                "retrieval_phrases": retrieval_phrases_text,
                 "source_file": os.path.basename(source_file),
                 "record_fp": record_fp,
                 "chunk_idx": chunk_idx,
@@ -169,7 +169,7 @@ def create_or_update_database():
         # - If ids already exist, Chroma will keep existing ones.
         # - We will only add truly missing ids by checking in batches.
         # (This avoids re-embedding everything every run.)
-        batch_size = 200
+        batch_size = 100
         add_docs: List[Document] = []
         add_ids: List[str] = []
 

@@ -63,7 +63,7 @@ def print_doc(doc, rank: int) -> None:
     print(f"source_url : {md.get('source_url')}")
     print(f"source_file: {md.get('source_file')}")
     # Print a few extra metadata fields if they exist
-    for key in ("title", "chunk_id", "page", "section", "doc_id"):
+    for key in ("title", "retrieval_phrases", "chunk_id", "page", "section", "doc_id"):
         if key in md:
             print(f"{key:10}: {md.get(key)}")
     print("-" * 110)
