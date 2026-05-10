@@ -45,7 +45,6 @@ def load_json_file(file_path):
                 "retrieval_phrases",
                 item.get("keyword", [])
             ),
-            "contextual_summary": item.get("contextual_summary", ""),
             "content": clean_text(item.get("content", ""))
         })
 
@@ -65,41 +64,53 @@ def extract_json_from_response(response):
 
 def generate_metadata(content):
     prompt = f"""
-You are helping prepare a RAG database for the School of Public Affairs and Administration at Rutgers University-Newark.
+    You are helping prepare a RAG database for the School of Public Affairs and Administration at Rutgers University-Newark.
 
-Based on the content below, generate:
-1. A short and accurate title.
-2. 3 to 10 retrieval phrases.
-3. A contextual summary that situates this content within the larger SPAA website or document collection.
+    Based on the content below, generate:
+    1. A short and accurate title.
+    2. 3 to 10 retrieval phrases.
 
-The contextual summary should:
-- Be 1 to 3 sentences.
-- Explain what this content is about.
-- Mention the likely page/document type when clear, such as admissions page, faculty profile, program page, certificate page, student resource page, policy page, event page, or contact page.
-- Include important names, offices, programs, roles, degrees, certificates, or procedures when supported by the content.
-- Help retrieval by clarifying what kind of user question this content can answer.
-- Do not invent information not supported by the content.
+    Retrieval phrase requirements:
+    - Each retrieval phrase should be a natural search phrase that a user might ask or that strongly identifies the content.
+    - Prefer phrase-level anchors, not isolated generic keywords.
+    - Prioritize exact names, official program names, role titles, offices, procedures, services, forms, policies, degrees, certificates, courses, acronyms, and contact-related phrases.
+    - Include exact official names when important for retrieval.
+    - Include likely user query phrases when appropriate.
+    - Avoid overly broad or low-information phrases such as "SPAA", "Rutgers", "University", "school", "program", or "student" by themselves.
+    - Do NOT create vague phrases such as "public administration", "academic programs", or "student services" unless the content is specifically about that topic.
+    - Retrieval phrases should usually contain 2 to 6 words.
+    - Do not invent information not supported by the content.
 
-Retrieval phrase requirements:
-- Each retrieval phrase should be a natural search phrase that a user might ask or that strongly identifies the content.
-- Prefer phrase-level anchors, not isolated generic keywords.
-- Prioritize exact names, official program names, role titles, offices, procedures, services, forms, policies, degrees, certificates, courses, acronyms, and contact-related phrases.
-- Avoid overly broad phrases such as "SPAA", "Rutgers", "University", "school", "program", or "student" by themselves.
-- Retrieval phrases should usually contain 2 to 6 words.
-- Do not invent information not supported by the content.
+    Good examples:
+    - "PhD program director"
+    - "Yahong Zhang"
+    - "MPA application deadline"
+    - "graduate certificate admission"
+    - "international student requirements"
+    - "public administration PhD curriculum"
+    - "Urban Education Policy certificate"
+    - "Nonprofit Management certificate"
 
-Return ONLY valid JSON. Do not include markdown, explanation, or code fences.
+    Bad examples:
+    - "SPAA"
+    - "Rutgers"
+    - "faculty"
+    - "students"
+    - "program"
+    - "research"
+    - "education"
 
-Format:
-{{
-  "title": "...",
-  "retrieval_phrases": ["...", "..."],
-  "contextual_summary": "..."
-}}
+    Return ONLY valid JSON. Do not include markdown, explanation, or code fences.
 
-Content:
-{content[:5000]}
-"""
+    Format:
+    {{
+    "title": "...",
+    "retrieval_phrases": ["...", "..."]
+    }}
+
+    Content:
+    {content[:5000]}
+    """
 
     response = model.invoke(prompt)
 
@@ -109,7 +120,6 @@ Content:
 
         title = result.get("title", "")
         retrieval_phrases = result.get("retrieval_phrases", [])
-        contextual_summary = result.get("contextual_summary", "")
 
         if isinstance(retrieval_phrases, str):
             retrieval_phrases = [
@@ -125,9 +135,9 @@ Content:
 
         title = ""
         retrieval_phrases = []
-        contextual_summary = ""
 
-    return title, retrieval_phrases, contextual_summary
+    return title, retrieval_phrases
+
 
 def build_consolidated_json():
     all_records = []
@@ -152,7 +162,6 @@ def build_consolidated_json():
                     "url": urls[0] if urls else "",
                     "title": file_path.stem,
                     "retrieval_phrases": [],
-                    "contextual_summary": "",
                     "content": content
                 })
 
@@ -166,10 +175,9 @@ def build_consolidated_json():
 
         title = record.get("title", "")
         retrieval_phrases = record.get("retrieval_phrases", [])
-        contextual_summary = record.get("contextual_summary", "")
 
-        if not title or not retrieval_phrases or not contextual_summary:
-            generated_title, generated_phrases, generated_context = generate_metadata(content)
+        if not title or not retrieval_phrases:
+            generated_title, generated_phrases = generate_metadata(content)
 
             if not title:
                 title = generated_title
@@ -177,14 +185,10 @@ def build_consolidated_json():
             if not retrieval_phrases:
                 retrieval_phrases = generated_phrases
 
-            if not contextual_summary:
-                contextual_summary = generated_context
-
         final_records.append({
             "url": record.get("url", ""),
             "title": title,
             "retrieval_phrases": retrieval_phrases,
-            "contextual_summary": contextual_summary,
             "content": content
         })
 

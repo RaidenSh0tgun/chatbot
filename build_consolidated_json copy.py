@@ -11,11 +11,9 @@ OUTPUT_FILE = "./Data/consolidated_rag_data.json"
 
 model = OllamaLLM(model="qwen2.5")
 
-
 def extract_urls(text):
     pattern = r"https?://[^\s\)\]\}>,]+"
     return re.findall(pattern, text or "")
-
 
 def clean_text(text):
     text = text or ""
@@ -41,11 +39,7 @@ def load_json_file(file_path):
         records.append({
             "url": item.get("url", ""),
             "title": item.get("title", ""),
-            "retrieval_phrases": item.get(
-                "retrieval_phrases",
-                item.get("keyword", [])
-            ),
-            "contextual_summary": item.get("contextual_summary", ""),
+            "keyword": item.get("keyword", []),
             "content": clean_text(item.get("content", ""))
         })
 
@@ -54,47 +48,40 @@ def load_json_file(file_path):
 
 def extract_json_from_response(response):
     response = response.strip()
+
+    # Remove markdown code fences if present
     response = response.replace("```json", "").replace("```", "").strip()
 
+    # Extract first JSON object
     match = re.search(r"\{.*\}", response, re.DOTALL)
     if match:
         return match.group(0)
 
     return response
 
-
 def generate_metadata(content):
     prompt = f"""
-You are helping prepare a RAG database for the School of Public Affairs and Administration at Rutgers University-Newark.
+You are helping prepare a RAG database for the School of Public Affairs and Administration (SPAA) at Rutgers University-Newark.
 
 Based on the content below, generate:
 1. A short and accurate title.
-2. 3 to 10 retrieval phrases.
-3. A contextual summary that situates this content within the larger SPAA website or document collection.
+2. 3 to 10 keywords for retrieval based on below requirements.
 
-The contextual summary should:
-- Be 1 to 3 sentences.
-- Explain what this content is about.
-- Mention the likely page/document type when clear, such as admissions page, faculty profile, program page, certificate page, student resource page, policy page, event page, or contact page.
-- Include important names, offices, programs, roles, degrees, certificates, or procedures when supported by the content.
-- Help retrieval by clarifying what kind of user question this content can answer.
-- Do not invent information not supported by the content.
+Keywords requirements:
+- MUST be short, high-signal English keywords or phrases.
+- Prioritize distinctive entities, programs, services, procedures, names, offices, forms, policies, technologies, or acronyms.
+- Include exact official names when important for retrieval.
+- Avoid generic institutional words unless essential for meaning.
+- DO NOT use overly broad or low-information keywords including: "SPAA", "Rutgers", "University", "school", 
 
-Retrieval phrase requirements:
-- Each retrieval phrase should be a natural search phrase that a user might ask or that strongly identifies the content.
-- Prefer phrase-level anchors, not isolated generic keywords.
-- Prioritize exact names, official program names, role titles, offices, procedures, services, forms, policies, degrees, certificates, courses, acronyms, and contact-related phrases.
-- Avoid overly broad phrases such as "SPAA", "Rutgers", "University", "school", "program", or "student" by themselves.
-- Retrieval phrases should usually contain 2 to 6 words.
-- Do not invent information not supported by the content.
+Only include these generic terms if they are necessary to distinguish the topic.
 
 Return ONLY valid JSON. Do not include markdown, explanation, or code fences.
 
 Format:
 {{
   "title": "...",
-  "retrieval_phrases": ["...", "..."],
-  "contextual_summary": "..."
+  "keyword": ["...", "..."]
 }}
 
 Content:
@@ -108,15 +95,10 @@ Content:
         result = json.loads(json_text)
 
         title = result.get("title", "")
-        retrieval_phrases = result.get("retrieval_phrases", [])
-        contextual_summary = result.get("contextual_summary", "")
+        keyword = result.get("keyword", [])
 
-        if isinstance(retrieval_phrases, str):
-            retrieval_phrases = [
-                phrase.strip()
-                for phrase in retrieval_phrases.split(",")
-                if phrase.strip()
-            ]
+        if isinstance(keyword, str):
+            keyword = [k.strip() for k in keyword.split(",") if k.strip()]
 
     except Exception as e:
         print("\nMetadata generation failed.")
@@ -124,10 +106,10 @@ Content:
         print("Error:", e)
 
         title = ""
-        retrieval_phrases = []
-        contextual_summary = ""
+        keyword = []
 
-    return title, retrieval_phrases, contextual_summary
+    return title, keyword
+
 
 def build_consolidated_json():
     all_records = []
@@ -139,6 +121,7 @@ def build_consolidated_json():
         if file_path.name == Path(OUTPUT_FILE).name:
             continue
 
+
         if file_path.suffix.lower() == ".json":
             records = load_json_file(file_path)
             all_records.extend(records)
@@ -146,13 +129,11 @@ def build_consolidated_json():
         elif file_path.suffix.lower() == ".docx":
             content = read_docx(file_path)
             urls = extract_urls(content)
-
             if content:
                 all_records.append({
                     "url": urls[0] if urls else "",
                     "title": file_path.stem,
-                    "retrieval_phrases": [],
-                    "contextual_summary": "",
+                    "keyword": [],
                     "content": content
                 })
 
@@ -165,26 +146,21 @@ def build_consolidated_json():
             continue
 
         title = record.get("title", "")
-        retrieval_phrases = record.get("retrieval_phrases", [])
-        contextual_summary = record.get("contextual_summary", "")
+        keyword = record.get("keyword", [])
 
-        if not title or not retrieval_phrases or not contextual_summary:
-            generated_title, generated_phrases, generated_context = generate_metadata(content)
+        if not title or not keyword:
+            generated_title, generated_keyword = generate_metadata(content)
 
             if not title:
                 title = generated_title
 
-            if not retrieval_phrases:
-                retrieval_phrases = generated_phrases
-
-            if not contextual_summary:
-                contextual_summary = generated_context
+            if not keyword:
+                keyword = generated_keyword
 
         final_records.append({
             "url": record.get("url", ""),
             "title": title,
-            "retrieval_phrases": retrieval_phrases,
-            "contextual_summary": contextual_summary,
+            "keyword": keyword,
             "content": content
         })
 

@@ -104,7 +104,6 @@ for content, metadata in zip(chroma_data["documents"], chroma_data["metadatas"])
     bm25_text = f"""
     {metadata.get("title", "")}
     {metadata.get("retrieval_phrases", "")}
-    {metadata.get("contextual_summary", "")}
     {metadata.get("keywords", "")}
     {content}
     """
@@ -182,7 +181,10 @@ Return ONLY valid JSON with exactly these keys:
 Rules:
 - Do not include any keys beyond the three keys above.
 - If use_retrieval is false, set search_query to "".
-- If use_retrieval is true, search_query MUST be a concise English retrieval phrase or a small set of high-signal phrases. DO NOT use overly broad or low-information words in search_query such as: "SPAA", "Rutgers", "University", "school". 
+- If use_retrieval is true, search_query MUST be a concise English retrieval phrase or a small set of high-signal phrases. Prefer exact names, role titles, program names, offices, forms, policies, procedures, and acronyms. Do not produce a generic keyword list.
+- DO NOT use overly broad or low-information words in search_query such as: "SPAA", "Rutgers", "University", "school". 
+
+Only include these generic terms if they are necessary to distinguish the topic.
 
 JSON:
 """
@@ -504,57 +506,6 @@ def sanitize_acknowledgment(persona: str, use_acknowledgment: bool, acknowledgme
     options = persona_to_ack.get(persona, [])
     return random.choice(options) if options else ""
 
-def phrase_overlap_score(query: str, phrases: str) -> float:
-        query = (query or "").lower()
-        phrases = (phrases or "").lower()
-
-        if not query or not phrases:
-            return 0.0
-
-        score = 0.0
-
-        phrase_list = [
-            p.strip()
-            for p in re.split(r"\||,|;", phrases)
-            if p.strip()
-        ]
-
-        for phrase in phrase_list:
-            if phrase in query:
-                score += 2.0
-
-            phrase_terms = phrase.split()
-            matched_terms = sum(1 for term in phrase_terms if term in query)
-
-            if phrase_terms:
-                score += matched_terms / len(phrase_terms)
-
-        return score
-
-
-def metadata_boost_score(doc, query: str) -> float:
-        q = (query or "").lower()
-
-        title = doc.metadata.get("title", "").lower()
-        retrieval_phrases = doc.metadata.get("retrieval_phrases", "").lower()
-        contextual_summary = doc.metadata.get("contextual_summary", "").lower()
-
-        score = 0.0
-
-        if title and title in q:
-            score += 2.0
-
-        for term in q.split():
-            if term in title:
-                score += 0.4
-            if term in contextual_summary:
-                score += 0.2
-
-        score += phrase_overlap_score(q, retrieval_phrases) * 1.5
-
-        return score
-
-
 def hybrid_retrieve(query: str, k_final: int = 8, k_chroma: int = 20, k_bm25: int = 20):
     """
     Hybrid retrieval:
@@ -661,9 +612,7 @@ def chat_endpoint():
                 source_url = doc.metadata.get("source_url", "")
 
                 # shorten chunk for CSV readability
-                contextual_summary = doc.metadata.get("contextual_summary", "")
-                preview_text = f"{contextual_summary} {doc.page_content}"
-                preview = preview_text[:500].replace("\n", " ")
+                preview = doc.page_content[:500].replace("\n", " ")
 
                 writer.writerow([
                     datetime.now().isoformat(),
@@ -773,7 +722,54 @@ def chat_endpoint():
     )
 
     # --- STEP A3: RETRIEVAL ---
-    
+    def phrase_overlap_score(query: str, phrases: str) -> float:
+        query = (query or "").lower()
+        phrases = (phrases or "").lower()
+
+        if not query or not phrases:
+            return 0.0
+
+        score = 0.0
+
+        phrase_list = [
+            p.strip()
+            for p in re.split(r"\||,|;", phrases)
+            if p.strip()
+        ]
+
+        for phrase in phrase_list:
+            if phrase in query:
+                score += 2.0
+
+            phrase_terms = phrase.split()
+            matched_terms = sum(1 for term in phrase_terms if term in query)
+
+            if phrase_terms:
+                score += matched_terms / len(phrase_terms)
+
+        return score
+
+
+    def metadata_boost_score(doc, query: str) -> float:
+        q = (query or "").lower()
+
+        title = doc.metadata.get("title", "").lower()
+        retrieval_phrases = doc.metadata.get("retrieval_phrases", "").lower()
+
+        score = 0.0
+
+        # Strong title boost
+        if title and title in q:
+            score += 2.0
+
+        for term in q.split():
+            if term in title:
+                score += 0.4
+
+        # Retrieval phrase boost
+        score += phrase_overlap_score(q, retrieval_phrases) * 1.5
+
+        return score
 
     docs = []
     info_text = ""
@@ -782,13 +778,18 @@ def chat_endpoint():
     if use_retrieval:
         effective_query = search_query if search_query else question
         try:
-            docs = hybrid_retrieve(
-                effective_query,
-                k_final=8,
-                k_chroma=20,
-                k_bm25=20
+            candidate_docs = vector_db.similarity_search(effective_query, k=20)
+
+            reranked_docs = sorted(
+                enumerate(candidate_docs),
+                key=lambda item: (
+                    metadata_boost_score(item[1], effective_query)
+                    + (1 / (item[0] + 1)) * 0.3
+                ),
+                reverse=True
             )
 
+            docs = [doc for _, doc in reranked_docs[:8]]
             # NEW
             save_retrieval_log(
                 session_id=session_id,
@@ -810,13 +811,11 @@ def chat_endpoint():
                 title = doc.metadata.get("title", "")
                 content = doc.page_content.strip()
                 phrases = doc.metadata.get("retrieval_phrases", "")
-                contextual_summary = doc.metadata.get("contextual_summary", "")
 
                 info_blocks.append(
                     f"[S{i}]\n"
                     f"TITLE: {title}\n"
                     f"RETRIEVAL_PHRASES: {phrases}\n"
-                    f"CONTEXTUAL_SUMMARY: {contextual_summary}\n"
                     f"URL: {url}\n"
                     f"CONTENT:\n{content}"
                 )

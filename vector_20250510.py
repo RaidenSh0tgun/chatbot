@@ -24,7 +24,7 @@ CHUNK_OVERLAP = 250
 SAFE_TEXT_CAP = 2000
 
 # If True: wipe DB and rebuild from scratch every time
-REBUILD_FROM_SCRATCH = True
+REBUILD_FROM_SCRATCH = False
 
 
 
@@ -60,7 +60,6 @@ def load_records(json_path: str) -> List[Dict[str, Any]]:
         url = item.get("url", "")
         title = item.get("title", "")
         keyword = item.get("retrieval_phrases", [])
-        contextual_summary = item.get("contextual_summary", "")
         content = item.get("content", "")
 
         if isinstance(keyword, list):
@@ -74,7 +73,6 @@ def load_records(json_path: str) -> List[Dict[str, Any]]:
                 "title": str(title).strip(),
                 "retrieval_phrases": keyword,
                 "retrieval_phrases_text": keyword_text,
-                "contextual_summary": str(contextual_summary).strip(),
                 "content": content.strip()
             })
 
@@ -97,28 +95,12 @@ def build_documents_from_records(
         title = rec.get("title", "")
         retrieval_phrases = rec.get("retrieval_phrases", [])
         retrieval_phrases_text = rec.get("retrieval_phrases_text", "")
-        contextual_summary = rec.get("contextual_summary", "")
         content = rec.get("content", "")
 
-        indexed_text = f"""
-            Title: {title}
-
-            Retrieval phrases: {retrieval_phrases_text}
-
-            Contextual summary: {contextual_summary}
-
-            Content:
-            {content}
-            """.strip()
+        indexed_text = content.strip()
 
         # Create a record-level hash, then chunk-level hash
-        record_fp = stable_hash(
-            url + "\n" 
-            + title + "\n" 
-            + retrieval_phrases_text + "\n" 
-            + contextual_summary + "\n" 
-            + content
-        )
+        record_fp = stable_hash(url + "\n" + title + "\n" + retrieval_phrases_text + "\n" + content)
 
         chunks = splitter.split_text(indexed_text)
 
@@ -133,7 +115,6 @@ def build_documents_from_records(
                 "source_url": url,
                 "title": title,
                 "retrieval_phrases": retrieval_phrases_text,
-                "contextual_summary": contextual_summary,
                 "source_file": os.path.basename(source_file),
                 "record_fp": record_fp,
                 "chunk_idx": chunk_idx,
