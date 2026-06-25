@@ -125,7 +125,7 @@ print(f"BM25 index built with {len(bm25_docs)} documents.")
 # 4) LLM
 # ----------------------------
 # Keep the same model for language, persona, router, filter, and answer for simplicity.
-model = OllamaLLM(model="qwen2.5")
+model = OllamaLLM(model="qwen3")
 
 
 # ----------------------------
